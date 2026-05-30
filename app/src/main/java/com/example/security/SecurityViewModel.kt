@@ -1,0 +1,191 @@
+package com.example.security
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+/**
+ * Expone el estado de seguridad a la UI y centraliza las operaciones de App Lock:
+ * configurar/cambiar/quitar PIN, verificar PIN (con control de intentos y lockout),
+ * biometría, timeout de bloqueo y bloqueo manual.
+ */
+class SecurityViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val prefs = SecurityPreferences(application)
+
+    val isPinSet: StateFlow<Boolean> =
+        prefs.isPinSet.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), initialValue = false)
+
+    val biometricEnabled: StateFlow<Boolean> =
+        prefs.biometricEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), initialValue = false)
+
+    val autoLockMinutes: StateFlow<Int> =
+        prefs.autoLockMinutes.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            initialValue = SecurityPreferences.DEFAULT_AUTO_LOCK_MINUTES,
+        )
+
+    /**
+     * Estado del candado para la raíz de la app.
+     *
+     * Se combina el flujo CRUDO de DataStore (no el StateFlow con valor inicial) para que el
+     * estado permanezca en [LockGate.LOADING] hasta saber si hay PIN: así no se muestra ningún
+     * dato financiero antes de resolver el bloqueo en el arranque en frío.
+     */
+    val gate: StateFlow<LockGate> =
+        combine(prefs.isPinSet, AppLockManager.isLocked) { pinSet, locked ->
+            if (pinSet && locked) LockGate.LOCKED else LockGate.UNLOCKED
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), LockGate.LOADING)
+
+    fun autoLockMillis(): Long {
+        val minutes = autoLockMinutes.value
+        return if (minutes <= 0) 0L else minutes * 60_000L
+    }
+
+    fun biometricAvailable(): Boolean = BiometricHelper.isAvailable(getApplication())
+
+    // --- Configuración del PIN ---
+
+    /** Configura el PIN por primera vez. Devuelve mensaje de error o null si fue exitoso. */
+    fun setupPin(pin: String, onResult: (error: String?) -> Unit) {
+        val validation = validatePin(pin)
+        if (validation != null) {
+            onResult(validation)
+            return
+        }
+        viewModelScope.launch {
+            val salt = PinHasher.generateSalt()
+            val hash = PinHasher.hash(pin, salt)
+            prefs.setPin(hash, salt)
+            AppLockManager.unlock()
+            onResult(null)
+        }
+    }
+
+    fun changePin(currentPin: String, newPin: String, onResult: (error: String?) -> Unit) {
+        val validation = validatePin(newPin)
+        if (validation != null) {
+            onResult(validation)
+            return
+        }
+        viewModelScope.launch {
+            if (!verifyAgainstStored(currentPin)) {
+                onResult("El PIN actual es incorrecto.")
+                return@launch
+            }
+            val salt = PinHasher.generateSalt()
+            val hash = PinHasher.hash(newPin, salt)
+            prefs.setPin(hash, salt)
+            onResult(null)
+        }
+    }
+
+    fun removePin(currentPin: String, onResult: (error: String?) -> Unit) {
+        viewModelScope.launch {
+            if (!verifyAgainstStored(currentPin)) {
+                onResult("El PIN actual es incorrecto.")
+                return@launch
+            }
+            prefs.clearPin()
+            // Sin PIN ya no hay bloqueo; aseguramos estado desbloqueado.
+            AppLockManager.unlock()
+            onResult(null)
+        }
+    }
+
+    // --- Desbloqueo ---
+
+    /**
+     * Verifica el PIN al desbloquear, controlando intentos fallidos y lockout temporal.
+     * @param onResult (éxito, mensajeError)
+     */
+    fun verifyPinForUnlock(pin: String, onResult: (success: Boolean, error: String?) -> Unit) {
+        viewModelScope.launch {
+            // Reloj de pared: el lockout se persiste y debe sobrevivir a reinicios del proceso
+            // sin verse afectado por el reinicio de elapsedRealtime tras reiniciar el equipo.
+            val now = System.currentTimeMillis()
+            val lockoutUntil = prefs.lockoutUntilElapsed.first()
+            if (lockoutUntil > now) {
+                val secs = ((lockoutUntil - now) / 1000) + 1
+                onResult(false, "Demasiados intentos. Espera $secs s.")
+                return@launch
+            }
+            if (verifyAgainstStored(pin)) {
+                prefs.setFailedAttempts(0)
+                prefs.setLockoutUntil(0L)
+                AppLockManager.unlock()
+                onResult(true, null)
+            } else {
+                val attempts = (failedAttemptsSnapshot()) + 1
+                if (attempts >= MAX_ATTEMPTS) {
+                    prefs.setFailedAttempts(0)
+                    prefs.setLockoutUntil(now + LOCKOUT_MS)
+                    onResult(false, "Demasiados intentos. Espera ${LOCKOUT_MS / 1000} s.")
+                } else {
+                    prefs.setFailedAttempts(attempts)
+                    val remaining = MAX_ATTEMPTS - attempts
+                    onResult(false, "PIN incorrecto. Te quedan $remaining intento(s).")
+                }
+            }
+        }
+    }
+
+    /** Verificación simple para reautenticación de acciones sensibles. */
+    fun verifyPin(pin: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch { onResult(verifyAgainstStored(pin)) }
+    }
+
+    // --- Biometría / timeout / bloqueo manual ---
+
+    fun setBiometricEnabled(enabled: Boolean) {
+        viewModelScope.launch { prefs.setBiometricEnabled(enabled) }
+    }
+
+    fun setAutoLockMinutes(minutes: Int) {
+        viewModelScope.launch { prefs.setAutoLockMinutes(minutes) }
+    }
+
+    fun lockNow() = AppLockManager.lock()
+
+    fun onBiometricUnlockSucceeded() {
+        viewModelScope.launch {
+            prefs.setFailedAttempts(0)
+            prefs.setLockoutUntil(0L)
+            AppLockManager.unlock()
+        }
+    }
+
+    // --- Helpers ---
+
+    private suspend fun verifyAgainstStored(pin: String): Boolean {
+        val pair = prefs.getHashAndSalt() ?: return false
+        val (hash, salt) = pair
+        return PinHasher.verify(pin, salt, hash)
+    }
+
+    private suspend fun failedAttemptsSnapshot(): Int = prefs.failedAttempts.first()
+
+    private fun validatePin(pin: String): String? = when {
+        pin.length < MIN_PIN_LENGTH -> "El PIN debe tener al menos $MIN_PIN_LENGTH dígitos."
+        pin.length > MAX_PIN_LENGTH -> "El PIN no puede superar $MAX_PIN_LENGTH dígitos."
+        !pin.all { it.isDigit() } -> "El PIN solo puede contener dígitos."
+        else -> null
+    }
+
+    companion object {
+        const val MIN_PIN_LENGTH = 4
+        const val MAX_PIN_LENGTH = 8
+        const val MAX_ATTEMPTS = 5
+        const val LOCKOUT_MS = 30_000L
+    }
+}
+
+/** Estado del candado de la app evaluado en la raíz antes de mostrar datos financieros. */
+enum class LockGate { LOADING, LOCKED, UNLOCKED }

@@ -25,10 +25,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.entity.CategoryEntity
+import com.example.security.SecurityViewModel
 import com.example.ui.components.CategoryChip
 import com.example.ui.components.EmptyState
 import com.example.ui.components.MainTopBar
+import com.example.ui.security.ConfirmPinDialog
+import com.example.ui.security.SecuritySettingsCard
 import com.example.ui.theme.ExcelDarkBlue
 import com.example.ui.theme.ExcelGreen
 import com.example.ui.theme.ExcelRed
@@ -40,9 +44,11 @@ import kotlinx.coroutines.launch
 @Composable
 fun AjustesScreen(
     viewModel: FinanceViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    securityViewModel: SecurityViewModel = viewModel()
 ) {
     val categories by viewModel.allCategories.collectAsState()
+    val isPinSet by securityViewModel.isPinSet.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -52,6 +58,12 @@ fun AjustesScreen(
     var selectedCategoryToEdit by remember { mutableStateOf<CategoryEntity?>(null) }
     var showResetSemillaConfirm by remember { mutableStateOf(false) }
     var showDeleteAllConfirm by remember { mutableStateOf(false) }
+
+    // Reautenticación para acciones sensibles: si hay PIN, exige confirmarlo antes de ejecutar.
+    var reauthAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    fun runSensitive(action: () -> Unit) {
+        if (isPinSet) reauthAction = action else action()
+    }
 
     val expensesCats = categories.filter { it.type == "EXPENSE" }
     val incomeCats = categories.filter { it.type == "INCOME" }
@@ -196,6 +208,14 @@ fun AjustesScreen(
                 }
             }
 
+            // --- SECURITY SECTION ---
+            Text(
+                "Seguridad",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp)
+            )
+            SecuritySettingsCard(securityViewModel = securityViewModel)
+
             // --- SYSTEM RECOVERY SECTION ---
             Text(
                 "Administración y Datos",
@@ -220,7 +240,7 @@ fun AjustesScreen(
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            "Toda la información financiera se almacena en el dispositivo de forma encriptada y segura.",
+                            "Toda la información financiera se almacena localmente en el dispositivo. Protégela activando el bloqueo de la app con PIN y biometría.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color.Gray
                         )
@@ -326,10 +346,12 @@ fun AjustesScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        viewModel.resetToSeedData()
                         showResetSemillaConfirm = false
-                        scope.launch {
-                            snackbarHostState.showSnackbar("Datos semilla cargados con éxito!")
+                        runSensitive {
+                            viewModel.resetToSeedData()
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Datos semilla cargados con éxito!")
+                            }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = ExcelDarkBlue)
@@ -354,10 +376,12 @@ fun AjustesScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        viewModel.clearAllData()
                         showDeleteAllConfirm = false
-                        scope.launch {
-                            snackbarHostState.showSnackbar("Todos los datos locales han sido eliminados.")
+                        runSensitive {
+                            viewModel.clearAllData()
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Todos los datos locales han sido eliminados.")
+                            }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = ExcelRed)
@@ -368,6 +392,26 @@ fun AjustesScreen(
             dismissButton = {
                 TextButton(onClick = { showDeleteAllConfirm = false }) {
                     Text("Cancelar")
+                }
+            }
+        )
+    }
+
+    // Reautenticación obligatoria para acciones sensibles (solo si hay PIN configurado).
+    reauthAction?.let { action ->
+        ConfirmPinDialog(
+            title = "Confirmar identidad",
+            message = "Ingresa tu PIN para continuar con esta acción sensible.",
+            confirmText = "Confirmar",
+            onDismiss = { reauthAction = null },
+            onConfirm = { pin, onError ->
+                securityViewModel.verifyPin(pin) { ok ->
+                    if (ok) {
+                        reauthAction = null
+                        action()
+                    } else {
+                        onError("PIN incorrecto.")
+                    }
                 }
             }
         )

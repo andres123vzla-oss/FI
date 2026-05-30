@@ -1,6 +1,5 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -36,7 +35,7 @@ import com.example.util.IconMapper
 @Composable
 fun PresupuestoScreen(
     viewModel: FinanceViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val budgetReports by viewModel.budgetReportFlow.collectAsState()
     val isAvgMode by viewModel.quarterlyAverageMode.collectAsState()
@@ -117,7 +116,7 @@ fun PresupuestoScreen(
                     }
                 }
 
-                Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
 
                 // Toggle "Quarterly Average Trimestral Mode"
                 Row(
@@ -169,7 +168,7 @@ fun PresupuestoScreen(
                     // Determine warning colors based on specifications
                     val statusColor = when {
                         usage <= 0.80 -> ExcelGreen                    // Under Budget: Green
-                        usage > 0.80 && usage <= 1.0 -> Color(0xFFEF6C00) // Near Budget Limit: Orange/Yellow
+                        (usage > 0.80) && (usage <= 1.0) -> Color(0xFFEF6C00) // Near Budget Limit: Orange/Yellow
                         else -> ExcelRed                             // Over Budget: Red
                     }
 
@@ -223,7 +222,7 @@ fun PresupuestoScreen(
 
                             // Row 2: Progress Indicator bar
                             LinearProgressIndicator(
-                                progress = usage.coerceAtMost(1.0).toFloat(),
+                                progress = { usage.coerceAtMost(1.0).toFloat() },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(8.dp)

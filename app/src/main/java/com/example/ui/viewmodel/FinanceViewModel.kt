@@ -9,6 +9,7 @@ import com.example.data.entity.CategoryEntity
 import com.example.data.entity.InvestmentEntity
 import com.example.data.entity.TransactionEntity
 import com.example.data.repository.FinanceRepository
+import com.example.util.FinanceCalculator
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -69,7 +70,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
         val totalIncome = filteredTx.filter { it.type == "INCOME" }.sumOf { it.amount }
         val totalExpense = filteredTx.filter { it.type == "EXPENSE" }.sumOf { it.amount }
-        val balance = totalIncome - totalExpense
+        val balance = FinanceCalculator.balance(totalIncome, totalExpense)
 
         val portfolioCurrentValue = stockList.sumOf { it.quantity * it.currentPrice }
 
@@ -114,9 +115,17 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             .mapValues { entry -> entry.value.sumOf { it.amount } }
 
         val categorySpentList = spentByCategory.map { (catName, sumAmount) ->
-            val percentage = if (totalExpense > 0) sumAmount / totalExpense else 0.0
+            val percentage = FinanceCalculator.ratio(sumAmount, totalExpense)
             CategoryExpenseSummary(catName, sumAmount, percentage)
         }.sortedByDescending { it.amount }
+
+        // Variación real del balance respecto al mes anterior (sin datos fabricados).
+        val curIdx = monthlySummaryList.indexOfFirst { it.month == month && it.year == year }
+        val momBalanceChange: Double? = if (curIdx > 0) {
+            val prevBalance = monthlySummaryList[curIdx - 1].balance
+            val curBalance = monthlySummaryList[curIdx].balance
+            if (prevBalance != 0.0) (curBalance - prevBalance) / kotlin.math.abs(prevBalance) else null
+        } else null
 
         DashboardDetails(
             incomeTotal = totalIncome,
@@ -124,7 +133,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             balanceTotal = balance,
             portfolioTotal = portfolioCurrentValue,
             monthlySummaries = monthlySummaryList,
-            categorySpendingList = categorySpentList
+            categorySpendingList = categorySpentList,
+            momBalanceChange = momBalanceChange
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardDetails())
 
@@ -237,7 +247,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             }
 
             val difference = budgetedAmount - spentAmount
-            val usagePercent = if (budgetedAmount > 0) spentAmount / budgetedAmount else 0.0
+            val usagePercent = FinanceCalculator.ratio(spentAmount, budgetedAmount)
 
             BudgetReportItem(
                 categoryName = category,
@@ -254,8 +264,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     val investmentSummaryFlow: StateFlow<InvestmentSummary> = allInvestments.map { stocks ->
         val totalInvested = stocks.sumOf { it.quantity * it.purchasePrice }
         val totalCurrent = stocks.sumOf { it.quantity * it.currentPrice }
-        val gainLoss = totalCurrent - totalInvested
-        val yieldPercent = if (totalInvested > 0) gainLoss / totalInvested else 0.0
+        val gainLoss = FinanceCalculator.gainLoss(totalCurrent, totalInvested)
+        val yieldPercent = FinanceCalculator.yieldPercent(gainLoss, totalInvested)
 
         InvestmentSummary(
             totalInvested = totalInvested,
@@ -406,7 +416,9 @@ data class DashboardDetails(
     val balanceTotal: Double = 0.0,
     val portfolioTotal: Double = 0.0,
     val monthlySummaries: List<MonthlySummary> = emptyList(),
-    val categorySpendingList: List<CategoryExpenseSummary> = emptyList()
+    val categorySpendingList: List<CategoryExpenseSummary> = emptyList(),
+    /** Variación proporcional del balance respecto al mes anterior; null si no hay base. */
+    val momBalanceChange: Double? = null
 )
 
 data class MonthlySummary(

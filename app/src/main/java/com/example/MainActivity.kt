@@ -1,7 +1,7 @@
 package com.example
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,11 +19,17 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.fragment.app.FragmentActivity
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -32,32 +38,86 @@ import androidx.navigation.compose.rememberNavController
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import com.example.security.AppLockManager
+import com.example.security.BiometricHelper
+import com.example.security.LockGate
+import com.example.security.SecurityViewModel
 import com.example.ui.screens.AjustesScreen
 import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.MovimientosScreen
 import com.example.ui.screens.PortafolioScreen
 import com.example.ui.screens.PresupuestoScreen
-import com.example.ui.theme.ExcelDarkBlue
+import com.example.ui.security.LockScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.FinanceViewModel
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.filled.ShowChart
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // FLAG_SECURE: impide capturas de pantalla y oculta el contenido en el selector de
+        // apps recientes, evitando exponer datos financieros.
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE,
+        )
         enableEdgeToEdge()
+        val activity = this
         setContent {
             MyApplicationTheme {
-                MainAppShell()
+                AppRoot(activity)
             }
         }
     }
 }
 
+/**
+ * Raíz de la app: aplica el App Lock antes de exponer cualquier dato financiero y gestiona el
+ * bloqueo automático por inactividad observando el ciclo de vida.
+ */
+@Composable
+fun AppRoot(activity: FragmentActivity) {
+    val securityViewModel: SecurityViewModel = viewModel()
+    val gate by securityViewModel.gate.collectAsState()
+
+    // Bloqueo automático: registra el paso a segundo plano y evalúa al volver al frente.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> AppLockManager.onAppBackgrounded()
+                Lifecycle.Event.ON_START -> AppLockManager.onAppForegrounded(securityViewModel.autoLockMillis())
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    when (gate) {
+        // Aún no sabemos si hay PIN: splash neutro, nunca datos financieros.
+        LockGate.LOADING -> Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {}
+        LockGate.LOCKED -> LockScreen(
+            securityViewModel = securityViewModel,
+            onBiometricRequested = {
+                BiometricHelper.authenticate(
+                    activity = activity,
+                    onSuccess = { securityViewModel.onBiometricUnlockSucceeded() },
+                    onError = { /* el usuario puede usar el PIN */ }
+                ) { /* el teclado de PIN ya está visible */ }
+            }
+        )
+        LockGate.UNLOCKED -> MainAppShell()
+    }
+}
+
 sealed class BottomNavItem(val route: String, val title: String, val icon: ImageVector, val tag: String) {
     object Dashboard : BottomNavItem("dashboard", "Resumen", Icons.Default.Dashboard, "bottom_tab_dashboard")
-    object Movimientos : BottomNavItem("movimientos", "Movimientos", Icons.Default.ReceiptLong, "bottom_tab_movimientos")
+    object Movimientos : BottomNavItem("movimientos", "Movimientos", Icons.AutoMirrored.Filled.ReceiptLong, "bottom_tab_movimientos")
     object Presupuesto : BottomNavItem("presupuesto", "Presupuesto", Icons.Default.TrackChanges, "bottom_tab_presupuesto")
-    object Portafolio : BottomNavItem("portafolio", "Portafolio", Icons.Default.ShowChart, "bottom_tab_portafolio")
+    object Portafolio : BottomNavItem("portafolio", "Portafolio", Icons.AutoMirrored.Filled.ShowChart, "bottom_tab_portafolio")
     object Ajustes : BottomNavItem("ajustes", "Ajustes", Icons.Default.Settings, "bottom_tab_ajustes")
 }
 

@@ -1,7 +1,7 @@
 package com.example.ui.components
 
-import androidx.compose.animation.*
 import androidx.compose.foundation.background
+import androidx.core.graphics.toColorInt
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -31,7 +31,7 @@ fun KpiCard(
     subtitle: String? = null,
     icon: ImageVector,
     color: Color,
-    testTag: String
+    testTag: String,
 ) {
     Card(
         modifier = modifier
@@ -106,8 +106,8 @@ fun CategoryChip(
     modifier: Modifier = Modifier
 ) {
     val categoryColor = try {
-        Color(android.graphics.Color.parseColor(colorHex))
-    } catch (e: Exception) {
+        Color(colorHex.toColorInt())
+    } catch (_: Exception) {
         MaterialTheme.colorScheme.primary
     }
 

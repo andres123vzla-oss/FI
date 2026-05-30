@@ -2,7 +2,6 @@ package com.example.ui.screens
 
 import android.app.DatePickerDialog
 import android.widget.DatePicker
-import androidx.compose.animation.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -15,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -33,11 +33,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.core.graphics.toColorInt
 import com.example.data.entity.CategoryEntity
+import com.example.security.SecurityViewModel
 import com.example.ui.components.CategoryChip
 import com.example.ui.components.KpiCard
 import com.example.ui.components.MainTopBar
 import com.example.ui.components.EmptyState
+import com.example.ui.security.ConfirmPinDialog
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.FinanceViewModel
 import com.example.util.FormatUtils
@@ -49,18 +53,21 @@ import java.util.*
 @Composable
 fun DashboardScreen(
     viewModel: FinanceViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    securityViewModel: SecurityViewModel = viewModel(),
 ) {
-    val context = LocalContext.current
     val dashboardData by viewModel.dashboardSummary.collectAsState()
     val rawCategories by viewModel.allCategories.collectAsState()
+    val isPinSet by securityViewModel.isPinSet.collectAsState()
 
     val selectedMonth by viewModel.selectedMonth.collectAsState()
     val selectedYear by viewModel.selectedYear.collectAsState()
 
-    var showAddDialog by remember { mutableStateOf(false) }
+    var showAddDialog by remember { mutableStateOf(value = false) }
     var dialogType by remember { mutableStateOf("INCOME") } // INCOME, EXPENSE
     var showAddStockDialog by remember { mutableStateOf(false) }
+    var showResetConfirm by remember { mutableStateOf(false) }
+    var reauthAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     // Dropdowns / Calendars helper
     val monthNames = listOf(
@@ -78,7 +85,7 @@ fun DashboardScreen(
             title = "📊 Mi Panel Financiero",
             containerColor = MaterialTheme.colorScheme.primary,
             actions = {
-                IconButton(onClick = { viewModel.resetToSeedData() }) {
+                IconButton(onClick = { showResetConfirm = true }) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
                         contentDescription = "Restaurar datos semilla",
@@ -239,9 +246,13 @@ fun DashboardScreen(
                                 )
                             }
 
-                            // Dynamic trend capsule from Design HTML style
-                            val isPositive = dashboardData.balanceTotal >= 0
-                            val pctText = if (isPositive) "+4.2% este mes" else "-1.5% este mes"
+                            // Cápsula de tendencia con la variación REAL respecto al mes anterior.
+                            val mom = dashboardData.momBalanceChange
+                            val pctText = if (mom != null) {
+                                "${FormatUtils.formatPercentage2Signed(mom)} vs mes anterior"
+                            } else {
+                                "Sin comparación previa"
+                            }
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(50))
@@ -312,7 +323,7 @@ fun DashboardScreen(
                             shape = RoundedCornerShape(8.dp),
                             contentPadding = PaddingValues(vertical = 12.dp)
                         ) {
-                            Icon(Icons.Default.ShowChart, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(Icons.AutoMirrored.Filled.ShowChart, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Acción", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
@@ -353,8 +364,7 @@ fun DashboardScreen(
                             val spacingBetweenBars = 3.dp.toPx()
 
                             summariesList.forEachIndexed { idx, sum ->
-                                val label = "${monthNames[sum.month - 1].take(3)} / ${sum.year.toString().takeLast(2)}"
-                                val baseX = idx * barGroupSpacing + barGroupSpacing / 2
+                                val baseX = (idx * barGroupSpacing) + (barGroupSpacing / 2)
 
                                 // Income height normalized
                                 val incomeHeight = (sum.income / maxVal) * (canvasHeight - 35.dp.toPx())
@@ -442,8 +452,8 @@ fun DashboardScreen(
                             val colHex = categoryObj?.colorHex ?: "#1F4E79"
                             val iconName = categoryObj?.iconName ?: "Category"
                             val categoryColor = try {
-                                Color(android.graphics.Color.parseColor(colHex))
-                            } catch (e: Exception) {
+                                Color(colHex.toColorInt())
+                            } catch (_: Exception) {
                                 MaterialTheme.colorScheme.primary
                             }
 
@@ -488,7 +498,7 @@ fun DashboardScreen(
                                 Spacer(modifier = Modifier.height(4.dp))
                                 // Horizontal Bar represent percentage
                                 LinearProgressIndicator(
-                                    progress = item.percentage.toFloat(),
+                                    progress = { item.percentage.toFloat() },
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(8.dp)
@@ -511,12 +521,11 @@ fun DashboardScreen(
         AddTransactionDialog(
             type = dialogType,
             categories = rawCategories.filter { it.type == dialogType },
-            onDismiss = { showAddDialog = false },
-            onSave = { date, category, desc, amount ->
-                viewModel.addTransaction(dialogType, date, category, desc, amount)
-                showAddDialog = false
-            }
-        )
+            onDismiss = { showAddDialog = false }
+        ) { date, category, desc, amount ->
+            viewModel.addTransaction(dialogType, date, category, desc, amount)
+            showAddDialog = false
+        }
     }
 
     // 2. Add Stock investment dialog
@@ -526,6 +535,48 @@ fun DashboardScreen(
             onSave = { ticker, name, qty, buyPrice, currentPrice ->
                 viewModel.addStock(ticker, name, qty, buyPrice, currentPrice)
                 showAddStockDialog = false
+            }
+        )
+    }
+
+    // 3. Confirmación antes de restaurar datos semilla (acción destructiva).
+    if (showResetConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirm = false },
+            title = { Text("⚡ ¿Restaurar datos semilla?", fontWeight = FontWeight.Bold) },
+            text = { Text("Esto sobrescribirá tus movimientos actuales con los balances originales (Ingresos: CLP 1.090.094, Gastos: CLP 748.825).") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showResetConfirm = false
+                        if (isPinSet) reauthAction = { viewModel.resetToSeedData() }
+                        else viewModel.resetToSeedData()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ExcelDarkBlue)
+                ) { Text("Restaurar", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirm = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    // Reautenticación para la acción sensible (solo si hay PIN configurado).
+    reauthAction?.let { action ->
+        ConfirmPinDialog(
+            title = "Confirmar identidad",
+            message = "Ingresa tu PIN para restaurar los datos semilla.",
+            confirmText = "Confirmar",
+            onDismiss = { reauthAction = null },
+            onConfirm = { pin, onError ->
+                securityViewModel.verifyPin(pin) { ok ->
+                    if (ok) {
+                        reauthAction = null
+                        action()
+                    } else {
+                        onError("PIN incorrecto.")
+                    }
+                }
             }
         )
     }
@@ -544,9 +595,9 @@ fun AddTransactionDialog(
     // Date Picker Management
     val calendar = Calendar.getInstance()
     // Pre-seed year 2026 month May (base indices 0-11: May is 4)
-    calendar.set(Calendar.YEAR, 2026)
-    calendar.set(Calendar.MONTH, Calendar.MAY)
-    calendar.set(Calendar.DAY_OF_MONTH, 29)
+    calendar[Calendar.YEAR] = 2026
+    calendar[Calendar.MONTH] = Calendar.MAY
+    calendar[Calendar.DAY_OF_MONTH] = 29
 
     val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
     var dateStr by remember { mutableStateOf(sdf.format(calendar.time)) }
@@ -562,9 +613,9 @@ fun AddTransactionDialog(
             }
             dateStr = sdf.format(cal.time)
         },
-        calendar.get(Calendar.YEAR),
-        calendar.get(Calendar.MONTH),
-        calendar.get(Calendar.DAY_OF_MONTH)
+        calendar[Calendar.YEAR],
+        calendar[Calendar.MONTH],
+        calendar[Calendar.DAY_OF_MONTH]
     )
 
     // Category Selected

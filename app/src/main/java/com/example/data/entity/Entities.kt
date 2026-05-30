@@ -12,7 +12,7 @@ data class TransactionEntity(
     val description: String,
     val amount: Double,
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
 )
 
 @Entity(tableName = "categories")
@@ -44,5 +44,5 @@ data class InvestmentEntity(
     val currentPrice: Double,
     val currency: String = "USD",
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
 )

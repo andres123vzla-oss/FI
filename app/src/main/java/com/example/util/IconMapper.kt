@@ -1,6 +1,7 @@
 package com.example.util
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -25,7 +26,7 @@ object IconMapper {
             "SportsEsports" -> Icons.Default.SportsEsports
             "AttachMoney" -> Icons.Default.AttachMoney
             "Work" -> Icons.Default.Work
-            "TrendingUp" -> Icons.Default.TrendingUp
+            "TrendingUp" -> Icons.AutoMirrored.Filled.TrendingUp
             "Storefront" -> Icons.Default.Storefront
             "EmojiEvents" -> Icons.Default.EmojiEvents
             "MoreHoriz" -> Icons.Default.MoreHoriz
@@ -38,7 +39,7 @@ object IconMapper {
     val availableIcons = listOf(
         "AttachMoney" to Icons.Default.AttachMoney,
         "Work" to Icons.Default.Work,
-        "TrendingUp" to Icons.Default.TrendingUp,
+        "TrendingUp" to Icons.AutoMirrored.Filled.TrendingUp,
         "Storefront" to Icons.Default.Storefront,
         "EmojiEvents" to Icons.Default.EmojiEvents,
         "AccountBalanceWallet" to Icons.Default.AccountBalanceWallet,
@@ -58,6 +59,6 @@ object IconMapper {
         "CardGiftcard" to Icons.Default.CardGiftcard,
         "SportsEsports" to Icons.Default.SportsEsports,
         "Category" to Icons.Default.Category,
-        "MoreHoriz" to Icons.Default.MoreHoriz
+        "MoreHoriz" to Icons.Default.MoreHoriz,
     )
 }

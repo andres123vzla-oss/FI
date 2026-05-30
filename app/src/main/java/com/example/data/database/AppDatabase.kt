@@ -15,7 +15,7 @@ import com.example.data.entity.TransactionEntity
         TransactionEntity::class,
         CategoryEntity::class,
         BudgetEntity::class,
-        InvestmentEntity::class
+        InvestmentEntity::class,
     ],
     version = 1,
     exportSchema = false
@@ -35,7 +35,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "finance_database"
                 )
-                .fallbackToDestructiveMigration()
+                .fallbackToDestructiveMigration(dropAllTables = true)
                 .build()
                 INSTANCE = instance
                 instance

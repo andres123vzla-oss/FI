@@ -1,6 +1,5 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -9,6 +8,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -19,7 +19,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -36,11 +35,11 @@ import com.example.util.FormatUtils
 @Composable
 fun PortafolioScreen(
     viewModel: FinanceViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val summary by viewModel.investmentSummaryFlow.collectAsState()
 
-    var showAddDialog by remember { mutableStateOf(false) }
+    var showAddDialog by remember { mutableStateOf(value = false) }
     var selectedStockToEdit by remember { mutableStateOf<InvestmentEntity?>(null) }
     var showDeleteConfirmDialog by remember { mutableStateOf<InvestmentEntity?>(null) }
 
@@ -51,7 +50,7 @@ fun PortafolioScreen(
                 onClick = { showAddDialog = true },
                 containerColor = ExcelMediumBlue,
                 contentColor = Color.White,
-                modifier = Modifier.testTag("fab_add_stock")
+                modifier = Modifier.testTag("fab_add_stock"),
             ) {
                 Icon(Icons.Default.Add, contentDescription = "Agregar Inversión")
             }
@@ -91,7 +90,7 @@ fun PortafolioScreen(
                         style = MaterialTheme.typography.headlineLarge.copy(color = Color.White, fontWeight = FontWeight.Bold, letterSpacing = (-1).sp)
                     )
 
-                    Divider(color = Color.White.copy(alpha = 0.2f))
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.2f))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -132,7 +131,7 @@ fun PortafolioScreen(
                 EmptyState(
                     modifier = Modifier.weight(1f),
                     message = "No tienes activos registrados. Presiona '+' para agregar.",
-                    icon = Icons.Default.ShowChart
+                    icon = Icons.AutoMirrored.Filled.ShowChart
                 )
             } else {
                 LazyColumn(
@@ -281,11 +280,10 @@ fun PortafolioScreen(
     if (showAddDialog) {
         AddStockDialog(
             onDismiss = { showAddDialog = false },
-            onSave = { ticker, name, qty, buyPrice, currentPrice ->
-                viewModel.addStock(ticker, name, qty, buyPrice, currentPrice)
-                showAddDialog = false
-            }
-        )
+        ) { ticker, name, qty, buyPrice, currentPrice ->
+            viewModel.addStock(ticker, name, qty, buyPrice, currentPrice)
+            showAddDialog = false
+        }
     }
 
     // Modal dialogue to EDIT Stock
@@ -351,15 +349,15 @@ fun PortafolioScreen(
                         val buyPrice = editBuyPrice.toDoubleOrNull()
                         val currentPrice = editCurrentPrice.toDoubleOrNull()
 
-                        if (qty == null || qty <= 0.0) {
+                        if ((qty == null) || (qty <= 0.0)) {
                             errorMsg = "Cantidad inválida."
                             return@Button
                         }
-                        if (buyPrice == null || buyPrice <= 0.0) {
+                        if ((buyPrice == null) || (buyPrice <= 0.0)) {
                             errorMsg = "Precio compra inválido."
                             return@Button
                         }
-                        if (currentPrice == null || currentPrice <= 0.0) {
+                        if ((currentPrice == null) || (currentPrice <= 0.0)) {
                             errorMsg = "Precio actual inválido."
                             return@Button
                         }
