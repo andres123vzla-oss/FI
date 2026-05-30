@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Stable horizontal bottom axis -->
+    <path
+        android:fillColor="#80FFFFFF"
+        android:pathData="M24,76 H84 V78 H24 Z" />
+
+    <!-- Left Bar (Savings Level / Stability) -->
+    <path
+        android:fillColor="#A0FFFFFF"
+        android:pathData="M30,52 h10 v24 h-10 Z" />
+
+    <!-- Middle Bar (Budget Level / Efficiency) -->
+    <path
+        android:fillColor="#E0FFFFFF"
+        android:pathData="M49,38 h10 v38 h-10 Z" />
+
+    <!-- Right Bar (Portfolio Level / Wealth Yield) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M68,24 h10 v52 h-10 Z" />
+
+    <!-- Dynamic upward trend chevron arrow on top -->
+    <path
+        android:fillColor="#107C41"
+        android:pathData="M26,51 L44,38 L62,49 L82,23 L85,26 L81,35 L76,28 L61,48 L44,35 L29,48 Z" />
+
+    <!-- Bright green arrow tip point -->
+    <path
+        android:fillColor="#3DDC84"
+        android:pathData="M81,19 L87,25 L79,27 Z" />
+</vector>

@@ -1,0 +1,6 @@
+{
+  "name": "Mi Panel Financiero",
+  "description": "Una aplicación nativa y moderna para la gestión inteligente de finanzas personales, presupuestos e inversiones.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
