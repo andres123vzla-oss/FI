@@ -148,10 +148,12 @@ fun MainAppShell() {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
+          androidx.compose.foundation.layout.Column {
+            androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             NavigationBar(
                 modifier = Modifier.testTag("app_navigation_bar"),
-                containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 8.dp
+                containerColor = MaterialTheme.colorScheme.background,
+                tonalElevation = 0.dp
             ) {
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
@@ -196,6 +198,7 @@ fun MainAppShell() {
                     )
                 }
             }
+          }
         }
     ) { innerPadding ->
         NavHost(

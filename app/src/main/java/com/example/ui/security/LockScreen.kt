@@ -78,15 +78,16 @@ fun LockScreen(
         ) {
             Box(
                 modifier = Modifier
-                    .size(72.dp)
-                    .clip(CircleShape),
+                    .size(84.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Filled.Lock,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(48.dp)
+                    modifier = Modifier.size(44.dp)
                 )
             }
             Spacer(Modifier.height(12.dp))

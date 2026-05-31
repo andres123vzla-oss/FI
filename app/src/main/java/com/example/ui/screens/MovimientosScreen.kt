@@ -82,8 +82,7 @@ fun MovimientosScreen(
         },
         topBar = {
             MainTopBar(
-                title = "💸 Libro de Movimientos",
-                containerColor = MaterialTheme.colorScheme.primary
+                title = "Libro de Movimientos"
             )
         }
     ) { innerPadding ->

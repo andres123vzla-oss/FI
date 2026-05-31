@@ -1,32 +1,49 @@
 package com.example.ui.components
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 
 /**
  * Estado global de privacidad: cuando es `true`, los montos sensibles se enmascaran en la UI.
  *
- * Se provee en la raíz de la app (MainAppShell) a partir de la preferencia persistida.
- * La lógica financiera sigue calculando con los valores reales; esto solo afecta la presentación.
+ * Arranca en `true` (oculto por defecto) según el handoff: ningún monto se revela hasta que el
+ * usuario toca el ojo. El valor efectivo se provee en la raíz (AppRoot) desde la preferencia
+ * persistida. La lógica financiera sigue calculando con los valores reales; esto solo afecta
+ * la presentación.
  */
-val LocalAmountsHidden = compositionLocalOf { false }
+val LocalAmountsHidden = compositionLocalOf { true }
 
-/** Texto usado para enmascarar un monto sensible cuando la privacidad está activada. */
-const val MASK = "••••••"
+/**
+ * Texto fijo para enmascarar un monto sensible. Es un literal de longitud constante: no refleja
+ * la magnitud real del valor, para no filtrar información.
+ */
+const val MASK = "•••••"
 
 /** Devuelve el texto original o la máscara según el estado de privacidad recibido. */
 fun maskAmount(value: String, hidden: Boolean): String = if (hidden) MASK else value
 
 /**
  * Texto de monto sensible reutilizable. Si la privacidad global está activa, muestra [MASK]
- * en lugar del valor real. Mantiene una sola línea por defecto para no romper el layout.
+ * en lugar del valor real. Usa números tabulares ("tnum") para que las cifras se alineen y no
+ * "salten" al cambiar de valor, y se mantiene en una sola línea por defecto para no romper el
+ * layout (los montos nunca se parten en dos líneas).
  */
 @Composable
 fun PrivacyAmountText(
@@ -43,12 +60,46 @@ fun PrivacyAmountText(
     val hidden = LocalAmountsHidden.current
     Text(
         text = if (hidden) MASK else (prefix + amount),
-        modifier = modifier,
-        style = style,
+        // Números tabulares: columnas de cifras alineadas y estables.
+        modifier = modifier.semantics {
+            if (hidden) contentDescription = "Monto oculto"
+        },
+        style = style.copy(fontFeatureSettings = "tnum"),
         color = color,
         maxLines = maxLines,
         softWrap = softWrap,
         overflow = overflow,
         textAlign = textAlign,
     )
+}
+
+/**
+ * Botón de ojo para alternar la visibilidad global de los montos. Hit target de 48dp,
+ * [contentDescription] dinámico y [stateDescription] para accesibilidad (TalkBack).
+ *
+ * @param hidden estado actual (true = montos ocultos).
+ * @param onToggle invoca el cambio de estado.
+ * @param tint color del ícono (por defecto, el acento del tema sobre barras oscuras).
+ */
+@Composable
+fun AmountVisibilityToggle(
+    hidden: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = MaterialTheme.colorScheme.onSurface,
+) {
+    IconButton(
+        onClick = onToggle,
+        modifier = modifier
+            .semantics {
+                contentDescription = if (hidden) "Mostrar montos" else "Ocultar montos"
+                stateDescription = if (hidden) "Montos ocultos" else "Montos visibles"
+            },
+    ) {
+        Icon(
+            imageVector = if (hidden) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+            contentDescription = null,
+            tint = tint,
+        )
+    }
 }

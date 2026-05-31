@@ -38,6 +38,7 @@ import androidx.core.graphics.toColorInt
 import com.example.data.entity.CategoryEntity
 import com.example.domain.FinancialHealth
 import com.example.security.SecurityViewModel
+import com.example.ui.components.AmountVisibilityToggle
 import com.example.ui.components.CategoryChip
 import com.example.ui.components.KpiCard
 import com.example.ui.components.MainTopBar
@@ -86,25 +87,20 @@ fun DashboardScreen(
     ) {
         // --- Custom Header ---
         MainTopBar(
-            title = "📊 Mi Panel Financiero",
-            containerColor = MaterialTheme.colorScheme.primary,
+            title = "Mi Panel Financiero",
             actions = {
                 // Privacidad: alterna el enmascarado global de montos sensibles.
-                IconButton(
-                    onClick = { securityViewModel.toggleHideAmounts() },
-                    modifier = Modifier.testTag("toggle_hide_amounts")
-                ) {
-                    Icon(
-                        imageVector = if (hideAmounts) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                        contentDescription = if (hideAmounts) "Mostrar montos" else "Ocultar montos",
-                        tint = Color.White
-                    )
-                }
+                AmountVisibilityToggle(
+                    hidden = hideAmounts,
+                    onToggle = { securityViewModel.toggleHideAmounts() },
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.testTag("toggle_hide_amounts"),
+                )
                 IconButton(onClick = { showResetConfirm = true }) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
                         contentDescription = "Restaurar datos semilla",
-                        tint = Color.White
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

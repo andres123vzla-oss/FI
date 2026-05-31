@@ -86,8 +86,7 @@ fun AjustesScreen(
         },
         topBar = {
             MainTopBar(
-                title = "⚙️ Configuración y Categorías",
-                containerColor = ExcelDarkBlue
+                title = "Configuración y Categorías"
             )
         }
     ) { innerPadding ->
@@ -246,7 +245,7 @@ fun AjustesScreen(
                         )
                     }
 
-                    Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                     // Restore seeds button
                     Row(

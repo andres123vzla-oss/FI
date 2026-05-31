@@ -50,9 +50,12 @@ class SecurityPreferences(private val context: Context) {
     val lockoutUntilElapsed: Flow<Long> =
         context.securityDataStore.data.map { it[Keys.LOCKOUT_UNTIL] ?: 0L }
 
-    /** Preferencia de privacidad: ocultar montos sensibles en la UI (no afecta los cálculos). */
+    /**
+     * Preferencia de privacidad: ocultar montos sensibles en la UI (no afecta los cálculos).
+     * Arranca en `true` (oculto por defecto): ningún monto se revela hasta que el usuario lo pide.
+     */
     val hideAmounts: Flow<Boolean> =
-        context.securityDataStore.data.map { it[Keys.HIDE_AMOUNTS] ?: false }
+        context.securityDataStore.data.map { it[Keys.HIDE_AMOUNTS] ?: true }
 
     /** Devuelve (hash, salt) o null si no hay PIN configurado. */
     suspend fun getHashAndSalt(): Pair<String, String>? {

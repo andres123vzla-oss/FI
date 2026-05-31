@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.entity.InvestmentEntity
 import com.example.security.SecurityViewModel
+import com.example.ui.components.AmountVisibilityToggle
 import com.example.ui.components.EmptyState
 import com.example.ui.components.MainTopBar
 import com.example.ui.components.PrivacyAmountText
@@ -69,19 +70,14 @@ fun PortafolioScreen(
         },
         topBar = {
             MainTopBar(
-                title = "📈 Portafolio de Inversión",
-                containerColor = ExcelMediumBlue,
+                title = "Portafolio de Inversión",
                 actions = {
-                    IconButton(
-                        onClick = { securityViewModel.toggleHideAmounts() },
-                        modifier = Modifier.testTag("toggle_hide_amounts_portfolio")
-                    ) {
-                        Icon(
-                            imageVector = if (hideAmounts) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            contentDescription = if (hideAmounts) "Mostrar montos" else "Ocultar montos",
-                            tint = Color.White
-                        )
-                    }
+                    AmountVisibilityToggle(
+                        hidden = hideAmounts,
+                        onToggle = { securityViewModel.toggleHideAmounts() },
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.testTag("toggle_hide_amounts_portfolio"),
+                    )
                 }
             )
         }

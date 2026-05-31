@@ -32,9 +32,9 @@ class SecurityViewModel(application: Application) : AndroidViewModel(application
             initialValue = SecurityPreferences.DEFAULT_AUTO_LOCK_MINUTES,
         )
 
-    /** Preferencia de privacidad: ocultar montos sensibles (solo afecta presentación). */
+    /** Preferencia de privacidad: ocultar montos sensibles (solo afecta presentación). Oculto por defecto. */
     val hideAmounts: StateFlow<Boolean> =
-        prefs.hideAmounts.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), initialValue = false)
+        prefs.hideAmounts.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), initialValue = true)
 
     /**
      * Estado del candado para la raíz de la app.

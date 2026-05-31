@@ -1,52 +1,78 @@
 package com.example.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-private val DarkColorScheme = darkColorScheme(
-    primary = ExcelMediumBlue,
-    secondary = ExcelDarkBlue,
-    tertiary = ExcelGreen,
-    background = DarkBackground,
-    surface = DarkSurface,
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFFE2E8F0),
-    onSurface = Color(0xFFF8FAFC),
-    error = ExcelRed,
-    onError = Color.White
+// ============================================================================
+// Tema "dark premium" — Mi Panel Financiero
+// ----------------------------------------------------------------------------
+// Tokens del handoff mapeados a ColorScheme / Typography / Shapes. Los semánticos
+// que Material 3 no cubre (success / warning / cyan) viajan por CompositionLocal
+// en [FinanceColors]. El rediseño es exclusivamente oscuro: ambos modos del
+// sistema usan este esquema para mantener la identidad premium y el contraste.
+//
+// Nota de mapeo: el código existente usa `colorScheme.surface` para tarjetas y
+// `colorScheme.background` para el fondo de pantalla. Por eso `surface` apunta a
+// la superficie de tarjeta (#14161B) y `background` al fondo (#0E0F12); así las
+// tarjetas se separan del fondo sin reescribir cada pantalla.
+// ============================================================================
+
+private val FinanceDarkScheme = darkColorScheme(
+    primary = AccentBlue,
+    onPrimary = OnAccent,
+    primaryContainer = SurfaceHigh,
+    onPrimaryContainer = OnSurface,
+    secondary = AccentCyan,
+    onSecondary = OnAccent,
+    tertiary = Success,
+    onTertiary = OnAccent,
+    background = Background,
+    onBackground = OnSurface,
+    surface = SurfaceContainer,
+    onSurface = OnSurface,
+    surfaceVariant = SurfaceHigh,
+    onSurfaceVariant = OnSurfaceVariant,
+    surfaceContainerLowest = Background,
+    surfaceContainerLow = SurfaceContainer,
+    surfaceContainer = SurfaceContainer,
+    surfaceContainerHigh = SurfaceHigh,
+    surfaceContainerHighest = SurfaceHighest,
+    outline = Outline,
+    outlineVariant = OutlineVariant,
+    error = Negative,
+    onError = OnAccent,
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = ExcelDarkBlue,
-    secondary = ExcelMediumBlue,
-    tertiary = ExcelGreen,
-    background = LightBackground,
-    surface = LightSurface,
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1E293B),
-    onSurface = Color(0xFF0F172A),
-    error = ExcelRed,
-    onError = Color.White
+/** Colores semánticos fuera del estándar Material 3 (success / warning / cyan). */
+@Immutable
+data class FinanceColors(
+    val success: Color = Success,
+    val warning: Color = Warning,
+    val accentCyan: Color = AccentCyan,
 )
+
+val LocalFinanceColors = staticCompositionLocalOf { FinanceColors() }
 
 @Composable
 fun MyApplicationTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
-
+    // Identidad dark premium: el esquema oscuro se aplica siempre.
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = FinanceDarkScheme,
         typography = Typography,
-        content = content
+        shapes = FinanceShapes,
+        content = {
+            CompositionLocalProvider(
+                LocalFinanceColors provides FinanceColors(),
+                content = content,
+            )
+        },
     )
 }

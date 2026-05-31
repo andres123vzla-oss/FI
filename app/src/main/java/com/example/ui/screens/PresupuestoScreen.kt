@@ -59,8 +59,7 @@ fun PresupuestoScreen(
     ) {
         // --- Header ---
         MainTopBar(
-            title = "🎯 Presupuesto Mensual",
-            containerColor = MaterialTheme.colorScheme.primary
+            title = "Presupuesto Mensual"
         )
 
         // --- Option Controls ---
