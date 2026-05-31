@@ -9,7 +9,22 @@ import com.example.data.entity.CategoryEntity
 import com.example.data.entity.InvestmentEntity
 import com.example.data.entity.TransactionEntity
 import com.example.data.repository.FinanceRepository
+import com.example.data.market.MarketDataProvider
+import com.example.data.market.PriceResult
+import com.example.domain.BudgetAnalyzer
+import com.example.domain.BudgetLine
+import com.example.domain.BudgetRecommendation
+import com.example.domain.BudgetSummary
+import com.example.domain.CashFlowAnalyzer
+import com.example.domain.CategoryAlert
+import com.example.domain.CategoryAnalysis
+import com.example.domain.CategorySpendingAnalyzer
+import com.example.domain.FinancialHealth
+import com.example.domain.FinancialHealthAnalyzer
+import com.example.domain.InvestmentCalculator
+import com.example.domain.PortfolioMetrics
 import com.example.util.FinanceCalculator
+import java.util.Calendar
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -17,6 +32,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     private val database = AppDatabase.getDatabase(application)
     private val repository = FinanceRepository(database.financeDao())
+    private val marketRepo = MarketDataProvider.repository
+
+    /** Estado de la actualización de precios de mercado (para la pantalla de Portafolio). */
+    val priceUpdateState = MutableStateFlow<PriceUpdateState>(PriceUpdateState.Idle)
+    val marketCanRefresh: Boolean get() = marketRepo.canRefresh
+    val marketModeLabel: String get() = marketRepo.modeLabel
 
     // App state: Selected Month and Year for Dashboard & Budget
     val selectedMonth = MutableStateFlow(5) // Default to May 2026 as per specification
@@ -119,13 +140,25 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             CategoryExpenseSummary(catName, sumAmount, percentage)
         }.sortedByDescending { it.amount }
 
-        // Variación real del balance respecto al mes anterior (sin datos fabricados).
+        // Variaciones reales respecto al mes anterior (sin datos fabricados).
         val curIdx = monthlySummaryList.indexOfFirst { it.month == month && it.year == year }
-        val momBalanceChange: Double? = if (curIdx > 0) {
-            val prevBalance = monthlySummaryList[curIdx - 1].balance
-            val curBalance = monthlySummaryList[curIdx].balance
-            if (prevBalance != 0.0) (curBalance - prevBalance) / kotlin.math.abs(prevBalance) else null
-        } else null
+        val prev = if (curIdx > 0) monthlySummaryList[curIdx - 1] else null
+        val momBalanceChange = CashFlowAnalyzer.variation(balance, prev?.balance)
+        val momIncomeChange = CashFlowAnalyzer.variation(totalIncome, prev?.income)
+        val momExpenseChange = CashFlowAnalyzer.variation(totalExpense, prev?.expense)
+
+        // Días del mes y días con actividad para promedios/proyección (sin depender del reloj).
+        val daysInMonth = daysInMonth(month, year)
+        val daysElapsed = filteredTx
+            .mapNotNull { it.date.split("-").getOrNull(2)?.toIntOrNull() }
+            .maxOrNull() ?: 0
+
+        val savingsRate = CashFlowAnalyzer.savingsRate(totalIncome, totalExpense)
+        val dailyAvgSpending = CashFlowAnalyzer.dailyAverageSpending(totalExpense, daysElapsed)
+        val projectedMonthEndSpending =
+            CashFlowAnalyzer.projectedMonthEndSpending(totalExpense, daysElapsed, daysInMonth)
+        val topCategory = CategorySpendingAnalyzer.topCategory(spentByCategory)
+        val health = FinancialHealthAnalyzer.evaluate(savingsRate, balance)
 
         DashboardDetails(
             incomeTotal = totalIncome,
@@ -134,7 +167,15 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             portfolioTotal = portfolioCurrentValue,
             monthlySummaries = monthlySummaryList,
             categorySpendingList = categorySpentList,
-            momBalanceChange = momBalanceChange
+            momBalanceChange = momBalanceChange,
+            momIncomeChange = momIncomeChange,
+            momExpenseChange = momExpenseChange,
+            savingsRate = savingsRate,
+            dailyAvgSpending = dailyAvgSpending,
+            projectedMonthEndSpending = projectedMonthEndSpending,
+            topCategoryName = topCategory?.categoryName,
+            topCategoryAmount = topCategory?.amount ?: 0.0,
+            health = health,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardDetails())
 
@@ -276,8 +317,127 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), InvestmentSummary())
 
+    /** Métricas completas del portafolio (pesos, mejor/peor, rendimiento) para la pantalla. */
+    val portfolioMetricsFlow: StateFlow<PortfolioMetrics> = allInvestments
+        .map { InvestmentCalculator.analyze(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), PortfolioMetrics())
+
+    /** Momento de la última actualización de precios (máximo `updatedAt`); null si no hay activos. */
+    val lastPriceUpdate: StateFlow<Long?> = allInvestments
+        .map { stocks -> stocks.maxOfOrNull { it.updatedAt } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    // --- Análisis de presupuesto derivado del reporte por categoría ---
+    private fun budgetLines(items: List<BudgetReportItem>): List<BudgetLine> =
+        items.map { BudgetLine(it.categoryName, it.budgetedAmount, it.spentAmount) }
+
+    /** Resumen agregado del presupuesto del mes seleccionado. */
+    val budgetSummaryFlow: StateFlow<BudgetSummary> = budgetReportFlow
+        .map { BudgetAnalyzer.summarize(budgetLines(it)) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), BudgetSummary())
+
+    /** Recomendaciones simples de presupuesto (montos crudos; la UI los formatea). */
+    val budgetRecommendationsFlow: StateFlow<List<BudgetRecommendation>> = budgetReportFlow
+        .map { BudgetAnalyzer.recommendations(budgetLines(it)) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // --- Análisis de gasto por categoría del mes seleccionado ---
+    val categoryAnalysisFlow: StateFlow<List<CategoryAnalysis>> = combine(
+        allTransactions,
+        allBudgets,
+        selectedMonth,
+        selectedYear
+    ) { txs, budgets, month, year ->
+        val spentByCategory = txs
+            .filter { tx ->
+                val parts = tx.date.split("-")
+                val txYear = parts.getOrNull(0)?.toIntOrNull() ?: 0
+                val txMonth = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                tx.type == "EXPENSE" && txYear == year && txMonth == month
+            }
+            .groupBy { it.categoryName }
+            .mapValues { entry -> entry.value.sumOf { it.amount } }
+        val budgetByCategory = budgets
+            .filter { it.month == month && it.year == year }
+            .associate { it.categoryName to it.plannedAmount }
+        CategorySpendingAnalyzer.analyze(spentByCategory, budgetByCategory)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Alertas de categorías sin presupuesto con gasto relevante. */
+    val unbudgetedAlertsFlow: StateFlow<List<CategoryAlert>> = combine(
+        allTransactions,
+        allBudgets,
+        selectedMonth,
+        selectedYear
+    ) { txs, budgets, month, year ->
+        val spentByCategory = txs
+            .filter { tx ->
+                val parts = tx.date.split("-")
+                val txYear = parts.getOrNull(0)?.toIntOrNull() ?: 0
+                val txMonth = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                tx.type == "EXPENSE" && txYear == year && txMonth == month
+            }
+            .groupBy { it.categoryName }
+            .mapValues { entry -> entry.value.sumOf { it.amount } }
+        val budgetByCategory = budgets
+            .filter { it.month == month && it.year == year }
+            .associate { it.categoryName to it.plannedAmount }
+        CategorySpendingAnalyzer.unbudgetedAlerts(spentByCategory, budgetByCategory)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
 
     // --- Actions/Operations ---
+
+    /**
+     * Actualiza los precios actuales consultando la fuente de mercado. Si la fuente no admite
+     * actualización (modo manual) o falla, se conservan los últimos precios conocidos y se informa
+     * al usuario. Nunca lanza excepción hacia la UI.
+     */
+    fun refreshPrices() {
+        if (!marketRepo.canRefresh) {
+            priceUpdateState.value = PriceUpdateState.Error(
+                "Actualización automática no disponible. Ingresa los precios manualmente."
+            )
+            return
+        }
+        viewModelScope.launch {
+            priceUpdateState.value = PriceUpdateState.Loading
+            val stocks = repository.allInvestments.first()
+            if (stocks.isEmpty()) {
+                priceUpdateState.value = PriceUpdateState.Error("No hay activos en el portafolio.")
+                return@launch
+            }
+            var updated = 0
+            var failed = 0
+            for (stock in stocks) {
+                when (val result = marketRepo.fetchPrice(stock.ticker)) {
+                    is PriceResult.Success -> {
+                        repository.updateInvestment(
+                            stock.copy(
+                                currentPrice = result.price,
+                                updatedAt = System.currentTimeMillis()
+                            )
+                        )
+                        updated++
+                    }
+                    is PriceResult.Failure -> failed++
+                }
+            }
+            priceUpdateState.value = if (updated > 0) {
+                val tail = if (failed > 0) " ($failed sin cambios)" else ""
+                PriceUpdateState.Success(updated, "Se actualizaron $updated precio(s)$tail.")
+            } else {
+                PriceUpdateState.Error(
+                    "No se pudieron actualizar los precios. Se conservan los últimos conocidos."
+                )
+            }
+        }
+    }
+
+    /** Restablece el estado de actualización (p. ej. tras mostrar un mensaje). */
+    fun clearPriceUpdateState() {
+        priceUpdateState.value = PriceUpdateState.Idle
+    }
 
     fun updateSelectedMonthYear(month: Int, year: Int) {
         selectedMonth.value = month
@@ -406,6 +566,23 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             repository.clearAllData()
         }
     }
+
+    /** Días reales del mes (incluye años bisiestos), sin depender del reloj del sistema. */
+    private fun daysInMonth(month: Int, year: Int): Int {
+        val cal = Calendar.getInstance()
+        cal.clear()
+        cal.set(Calendar.YEAR, year)
+        cal.set(Calendar.MONTH, (month - 1).coerceIn(0, 11))
+        return cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+    }
+}
+
+/** Estado de la actualización de precios de mercado mostrado en la pantalla de Portafolio. */
+sealed class PriceUpdateState {
+    object Idle : PriceUpdateState()
+    object Loading : PriceUpdateState()
+    data class Success(val updatedCount: Int, val message: String) : PriceUpdateState()
+    data class Error(val message: String) : PriceUpdateState()
 }
 
 // --- Companion / Auxiliary Data Structures ---
@@ -418,7 +595,22 @@ data class DashboardDetails(
     val monthlySummaries: List<MonthlySummary> = emptyList(),
     val categorySpendingList: List<CategoryExpenseSummary> = emptyList(),
     /** Variación proporcional del balance respecto al mes anterior; null si no hay base. */
-    val momBalanceChange: Double? = null
+    val momBalanceChange: Double? = null,
+    /** Variación proporcional de ingresos respecto al mes anterior; null si no hay base. */
+    val momIncomeChange: Double? = null,
+    /** Variación proporcional de gastos respecto al mes anterior; null si no hay base. */
+    val momExpenseChange: Double? = null,
+    /** Tasa de ahorro del mes: (ingresos − gastos) / ingresos. */
+    val savingsRate: Double = 0.0,
+    /** Gasto diario promedio del periodo con actividad. */
+    val dailyAvgSpending: Double = 0.0,
+    /** Proyección de gasto a fin de mes según el ritmo actual. */
+    val projectedMonthEndSpending: Double = 0.0,
+    /** Categoría con mayor gasto del mes; null si no hay gasto. */
+    val topCategoryName: String? = null,
+    val topCategoryAmount: Double = 0.0,
+    /** Estado financiero del mes (Excelente/Bueno/Ajustado/Crítico). */
+    val health: FinancialHealth = FinancialHealth.AJUSTADO,
 )
 
 data class MonthlySummary(

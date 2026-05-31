@@ -42,4 +42,26 @@ class FormatUtilsTest {
         assertEquals("50.0%", FormatUtils.formatPercentage(0.5))
         assertEquals("0.0%", FormatUtils.formatPercentage(0.0))
     }
+
+    @Test
+    fun `CLP compacto usa sufijos M y K sin partir el numero`() {
+        assertEquals("CLP 1,09M", FormatUtils.formatCLPCompact(1_090_094.0))
+        assertEquals("CLP 748,8K", FormatUtils.formatCLPCompact(748_825.0))
+        // Montos pequeños conservan el formato completo.
+        assertEquals("CLP 5.000", FormatUtils.formatCLPCompact(5_000.0))
+    }
+
+    @Test
+    fun `USD compacto usa sufijos con punto decimal`() {
+        assertEquals("USD 1.09M", FormatUtils.formatUSDCompact(1_090_000.0))
+        assertEquals("USD 35.80K", FormatUtils.formatUSDCompact(35_800.0))
+        // Por debajo de 10.000 conserva el formato USD completo.
+        assertEquals("USD 3,580.00", FormatUtils.formatUSDCompact(3_580.0))
+    }
+
+    @Test
+    fun `compacto sanea valores no finitos`() {
+        assertEquals("CLP 0", FormatUtils.formatCLPCompact(Double.NaN))
+        assertEquals("USD 0.00", FormatUtils.formatUSDCompact(Double.POSITIVE_INFINITY))
+    }
 }

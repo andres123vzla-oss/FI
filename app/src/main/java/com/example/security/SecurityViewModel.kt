@@ -32,16 +32,27 @@ class SecurityViewModel(application: Application) : AndroidViewModel(application
             initialValue = SecurityPreferences.DEFAULT_AUTO_LOCK_MINUTES,
         )
 
+    /** Preferencia de privacidad: ocultar montos sensibles (solo afecta presentación). */
+    val hideAmounts: StateFlow<Boolean> =
+        prefs.hideAmounts.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), initialValue = false)
+
     /**
      * Estado del candado para la raíz de la app.
      *
      * Se combina el flujo CRUDO de DataStore (no el StateFlow con valor inicial) para que el
      * estado permanezca en [LockGate.LOADING] hasta saber si hay PIN: así no se muestra ningún
      * dato financiero antes de resolver el bloqueo en el arranque en frío.
+     *
+     * La seguridad es OBLIGATORIA: si no hay PIN configurado, el estado es [LockGate.SETUP] y la
+     * app fuerza la configuración del PIN antes de mostrar cualquier dato financiero.
      */
     val gate: StateFlow<LockGate> =
         combine(prefs.isPinSet, AppLockManager.isLocked) { pinSet, locked ->
-            if (pinSet && locked) LockGate.LOCKED else LockGate.UNLOCKED
+            when {
+                !pinSet -> LockGate.SETUP
+                locked -> LockGate.LOCKED
+                else -> LockGate.UNLOCKED
+            }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), LockGate.LOADING)
 
     fun autoLockMillis(): Long {
@@ -152,6 +163,14 @@ class SecurityViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { prefs.setAutoLockMinutes(minutes) }
     }
 
+    fun setHideAmounts(hidden: Boolean) {
+        viewModelScope.launch { prefs.setHideAmounts(hidden) }
+    }
+
+    fun toggleHideAmounts() {
+        viewModelScope.launch { prefs.setHideAmounts(!hideAmounts.value) }
+    }
+
     fun lockNow() = AppLockManager.lock()
 
     fun onBiometricUnlockSucceeded() {
@@ -187,5 +206,12 @@ class SecurityViewModel(application: Application) : AndroidViewModel(application
     }
 }
 
-/** Estado del candado de la app evaluado en la raíz antes de mostrar datos financieros. */
-enum class LockGate { LOADING, LOCKED, UNLOCKED }
+/**
+ * Estado del candado de la app evaluado en la raíz antes de mostrar datos financieros.
+ *
+ * - [LOADING]: aún no se sabe si hay PIN (arranque en frío).
+ * - [SETUP]: no hay PIN configurado; se fuerza la configuración inicial obligatoria.
+ * - [LOCKED]: hay PIN y la app está bloqueada; se exige desbloqueo.
+ * - [UNLOCKED]: acceso concedido.
+ */
+enum class LockGate { LOADING, SETUP, LOCKED, UNLOCKED }

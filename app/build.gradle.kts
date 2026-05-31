@@ -18,6 +18,20 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    // Campos de BuildConfig con fallback VACÍO seguro. No se hardcodean claves reales: si no hay
+    // valor, quedan como "" y la app funciona en modo manual/local. La fuente de estos campos es
+    // este bloque (no el plugin de secrets, cuyo `.env.example` solo tiene comentarios), evitando
+    // así campos duplicados y errores de parseo en el BuildConfig generado.
+    //
+    // MARKET_API_KEY: se lee de la variable de entorno o de una propiedad de Gradle
+    // (-PMARKET_API_KEY=...); nunca del código fuente. Vacía ⇒ precios manuales.
+    val marketApiKey = System.getenv("MARKET_API_KEY")
+      ?: (project.findProperty("MARKET_API_KEY") as String?)
+      ?: ""
+    buildConfigField("String", "MARKET_API_KEY", "\"$marketApiKey\"")
+    // GEMINI_API_KEY: no lo usa el código de la app; se expone vacío por compatibilidad.
+    buildConfigField("String", "GEMINI_API_KEY", "\"\"")
   }
 
   signingConfigs {
@@ -28,12 +42,8 @@ android {
       keyAlias = "upload"
       keyPassword = System.getenv("KEY_PASSWORD")
     }
-    create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
-    }
+    // El build type debug usa la firma debug automática de Android (~/.android/debug.keystore),
+    // por lo que no se declara ningún signingConfig manual ni se versiona un keystore.
   }
 
   buildTypes {

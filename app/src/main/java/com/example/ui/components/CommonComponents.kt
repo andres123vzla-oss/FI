@@ -75,13 +75,16 @@ fun KpiCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = amount,
+                PrivacyAmountText(
+                    amount = amount,
                     style = MaterialTheme.typography.headlineSmall.copy(
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = (-0.5).sp
-                    )
+                    ),
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 if (subtitle != null) {
                     Spacer(modifier = Modifier.height(2.dp))

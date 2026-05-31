@@ -36,11 +36,13 @@ import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.graphics.toColorInt
 import com.example.data.entity.CategoryEntity
+import com.example.domain.FinancialHealth
 import com.example.security.SecurityViewModel
 import com.example.ui.components.CategoryChip
 import com.example.ui.components.KpiCard
 import com.example.ui.components.MainTopBar
 import com.example.ui.components.EmptyState
+import com.example.ui.components.PrivacyAmountText
 import com.example.ui.security.ConfirmPinDialog
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.FinanceViewModel
@@ -59,6 +61,8 @@ fun DashboardScreen(
     val dashboardData by viewModel.dashboardSummary.collectAsState()
     val rawCategories by viewModel.allCategories.collectAsState()
     val isPinSet by securityViewModel.isPinSet.collectAsState()
+    val hideAmounts by securityViewModel.hideAmounts.collectAsState()
+    val unbudgetedAlerts by viewModel.unbudgetedAlertsFlow.collectAsState()
 
     val selectedMonth by viewModel.selectedMonth.collectAsState()
     val selectedYear by viewModel.selectedYear.collectAsState()
@@ -85,6 +89,17 @@ fun DashboardScreen(
             title = "📊 Mi Panel Financiero",
             containerColor = MaterialTheme.colorScheme.primary,
             actions = {
+                // Privacidad: alterna el enmascarado global de montos sensibles.
+                IconButton(
+                    onClick = { securityViewModel.toggleHideAmounts() },
+                    modifier = Modifier.testTag("toggle_hide_amounts")
+                ) {
+                    Icon(
+                        imageVector = if (hideAmounts) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                        contentDescription = if (hideAmounts) "Mostrar montos" else "Ocultar montos",
+                        tint = Color.White
+                    )
+                }
                 IconButton(onClick = { showResetConfirm = true }) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
@@ -164,7 +179,7 @@ fun DashboardScreen(
                 KpiCard(
                     modifier = Modifier.weight(1f),
                     title = "Ingresos Totales",
-                    amount = FormatUtils.formatCLP(dashboardData.incomeTotal),
+                    amount = FormatUtils.formatCLPCompact(dashboardData.incomeTotal),
                     icon = Icons.Default.ArrowUpward,
                     color = ExcelGreen,
                     testTag = "kpi_income"
@@ -172,7 +187,7 @@ fun DashboardScreen(
                 KpiCard(
                     modifier = Modifier.weight(1f),
                     title = "Gastos Totales",
-                    amount = FormatUtils.formatCLP(dashboardData.expenseTotal),
+                    amount = FormatUtils.formatCLPCompact(dashboardData.expenseTotal),
                     icon = Icons.Default.ArrowDownward,
                     color = ExcelRed,
                     testTag = "kpi_expense"
@@ -214,13 +229,17 @@ fun DashboardScreen(
                             )
                         )
                         Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = FormatUtils.formatCLP(dashboardData.balanceTotal),
+                        PrivacyAmountText(
+                            amount = FormatUtils.formatCLP(dashboardData.balanceTotal),
                             style = MaterialTheme.typography.headlineLarge.copy(
                                 color = Color.White,
                                 fontWeight = FontWeight.Black,
                                 fontSize = 28.sp
-                            )
+                            ),
+                            color = Color.White,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
                         )
                         Spacer(modifier = Modifier.height(20.dp))
                         Row(
@@ -237,12 +256,16 @@ fun DashboardScreen(
                                         letterSpacing = 0.5.sp
                                     )
                                 )
-                                Text(
-                                    text = FormatUtils.formatUSD(dashboardData.portfolioTotal),
+                                PrivacyAmountText(
+                                    amount = FormatUtils.formatUSD(dashboardData.portfolioTotal),
                                     style = MaterialTheme.typography.titleLarge.copy(
                                         color = Color.White,
                                         fontWeight = FontWeight.Bold
-                                    )
+                                    ),
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
 
@@ -268,6 +291,132 @@ fun DashboardScreen(
                                 )
                             }
                         }
+                    }
+                }
+            }
+
+            // --- MÉTRICAS INTELIGENTES DEL MES ---
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("dashboard_metrics_card"),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "🧠 Métricas del Mes",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        // Estado financiero (no expone montos).
+                        val health = dashboardData.health
+                        val healthColor = when (health) {
+                            FinancialHealth.EXCELENTE -> ExcelGreen
+                            FinancialHealth.BUENO -> ExcelMediumBlue
+                            FinancialHealth.AJUSTADO -> Color(0xFFEF6C00)
+                            FinancialHealth.CRITICO -> ExcelRed
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(healthColor.copy(alpha = 0.15f))
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = health.label,
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    color = healthColor,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Fila 1: Tasa de ahorro + Gasto diario promedio.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        MetricCell(
+                            modifier = Modifier.weight(1f),
+                            label = "Tasa de ahorro",
+                            // El porcentaje no revela montos exactos: siempre visible.
+                            value = FormatUtils.formatPercentage(dashboardData.savingsRate),
+                            valueColor = if (dashboardData.savingsRate >= 0) ExcelGreen else ExcelRed,
+                            sensitive = false
+                        )
+                        MetricCell(
+                            modifier = Modifier.weight(1f),
+                            label = "Gasto diario prom.",
+                            value = FormatUtils.formatCLPCompact(dashboardData.dailyAvgSpending),
+                            sensitive = true
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Fila 2: Proyección a fin de mes + Categoría con mayor gasto.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        MetricCell(
+                            modifier = Modifier.weight(1f),
+                            label = "Proyección fin de mes",
+                            value = FormatUtils.formatCLPCompact(dashboardData.projectedMonthEndSpending),
+                            sensitive = true
+                        )
+                        MetricCell(
+                            modifier = Modifier.weight(1f),
+                            label = "Mayor gasto",
+                            value = dashboardData.topCategoryName?.let {
+                                "$it · ${FormatUtils.formatCLPCompact(dashboardData.topCategoryAmount)}"
+                            } ?: "Sin gastos",
+                            sensitive = dashboardData.topCategoryName != null
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Fila 3: Variación de ingresos y gastos (porcentajes, no sensibles).
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        val incChange = dashboardData.momIncomeChange
+                        val expChange = dashboardData.momExpenseChange
+                        MetricCell(
+                            modifier = Modifier.weight(1f),
+                            label = "Ingresos vs mes ant.",
+                            value = incChange?.let { FormatUtils.formatPercentage2Signed(it) }
+                                ?: "Sin comparación",
+                            valueColor = when {
+                                incChange == null -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                incChange >= 0 -> ExcelGreen
+                                else -> ExcelRed
+                            },
+                            sensitive = false
+                        )
+                        MetricCell(
+                            modifier = Modifier.weight(1f),
+                            label = "Gastos vs mes ant.",
+                            value = expChange?.let { FormatUtils.formatPercentage2Signed(it) }
+                                ?: "Sin comparación",
+                            valueColor = when {
+                                expChange == null -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                expChange <= 0 -> ExcelGreen
+                                else -> ExcelRed
+                            },
+                            sensitive = false
+                        )
                     }
                 }
             }
@@ -441,6 +590,38 @@ fun DashboardScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    // Alertas: categorías sin presupuesto con gasto relevante (sin exponer montos).
+                    if (unbudgetedAlerts.isNotEmpty()) {
+                        unbudgetedAlerts.forEach { alert ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFFEF6C00).copy(alpha = 0.1f))
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = Color(0xFFEF6C00),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "${alert.categoryName} sin presupuesto · ${FormatUtils.formatPercentage(alert.percentOfTotal)} del gasto",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = Color(0xFFEF6C00),
+                                        fontWeight = FontWeight.Medium
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+
                     if (dashboardData.categorySpendingList.isEmpty()) {
                         EmptyState(
                             message = "No hay gastos registrados en este mes.",
@@ -489,11 +670,23 @@ fun DashboardScreen(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                     }
-                                    Text(
-                                        text = "${FormatUtils.formatCLP(item.amount)} (${FormatUtils.formatPercentage(item.percentage)})",
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                                        textAlign = TextAlign.End
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        PrivacyAmountText(
+                                            amount = FormatUtils.formatCLP(item.amount),
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                            textAlign = TextAlign.End,
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        // El porcentaje no revela el monto exacto: siempre visible.
+                                        Text(
+                                            text = "(${FormatUtils.formatPercentage(item.percentage)})",
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                            ),
+                                            textAlign = TextAlign.End
+                                        )
+                                    }
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 // Horizontal Bar represent percentage
@@ -579,6 +772,56 @@ fun DashboardScreen(
                 }
             }
         )
+    }
+}
+
+/**
+ * Celda de métrica reutilizable del dashboard. Si [sensitive] es true, el valor se enmascara
+ * cuando la privacidad global está activa; los porcentajes y estados se marcan como no sensibles.
+ */
+@Composable
+private fun MetricCell(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    valueColor: Color = Color.Unspecified,
+    sensitive: Boolean = true,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f))
+            .padding(12.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                fontWeight = FontWeight.Medium
+            ),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        if (sensitive) {
+            PrivacyAmountText(
+                amount = value,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = valueColor,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = valueColor,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

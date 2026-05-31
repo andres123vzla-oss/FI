@@ -28,6 +28,7 @@ class SecurityPreferences(private val context: Context) {
         val AUTO_LOCK_MINUTES = intPreferencesKey("auto_lock_minutes")
         val FAILED_ATTEMPTS = intPreferencesKey("failed_attempts")
         val LOCKOUT_UNTIL = longPreferencesKey("lockout_until_elapsed")
+        val HIDE_AMOUNTS = booleanPreferencesKey("hide_amounts")
     }
 
     companion object {
@@ -48,6 +49,10 @@ class SecurityPreferences(private val context: Context) {
 
     val lockoutUntilElapsed: Flow<Long> =
         context.securityDataStore.data.map { it[Keys.LOCKOUT_UNTIL] ?: 0L }
+
+    /** Preferencia de privacidad: ocultar montos sensibles en la UI (no afecta los cálculos). */
+    val hideAmounts: Flow<Boolean> =
+        context.securityDataStore.data.map { it[Keys.HIDE_AMOUNTS] ?: false }
 
     /** Devuelve (hash, salt) o null si no hay PIN configurado. */
     suspend fun getHashAndSalt(): Pair<String, String>? {
@@ -91,5 +96,9 @@ class SecurityPreferences(private val context: Context) {
 
     suspend fun setLockoutUntil(elapsedMillis: Long) {
         context.securityDataStore.edit { it[Keys.LOCKOUT_UNTIL] = elapsedMillis }
+    }
+
+    suspend fun setHideAmounts(hidden: Boolean) {
+        context.securityDataStore.edit { it[Keys.HIDE_AMOUNTS] = hidden }
     }
 }

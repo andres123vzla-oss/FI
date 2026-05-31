@@ -48,7 +48,10 @@ import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.MovimientosScreen
 import com.example.ui.screens.PortafolioScreen
 import com.example.ui.screens.PresupuestoScreen
+import com.example.ui.components.LocalAmountsHidden
 import com.example.ui.security.LockScreen
+import com.example.ui.security.SetupLockScreen
+import androidx.compose.runtime.CompositionLocalProvider
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.FinanceViewModel
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
@@ -99,6 +102,8 @@ fun AppRoot(activity: FragmentActivity) {
     when (gate) {
         // Aún no sabemos si hay PIN: splash neutro, nunca datos financieros.
         LockGate.LOADING -> Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {}
+        // Primer inicio: se exige configurar el PIN antes de mostrar cualquier dato financiero.
+        LockGate.SETUP -> SetupLockScreen(securityViewModel = securityViewModel)
         LockGate.LOCKED -> LockScreen(
             securityViewModel = securityViewModel,
             onBiometricRequested = {
@@ -109,7 +114,13 @@ fun AppRoot(activity: FragmentActivity) {
                 ) { /* el teclado de PIN ya está visible */ }
             }
         )
-        LockGate.UNLOCKED -> MainAppShell()
+        LockGate.UNLOCKED -> {
+            // Privacidad: expone globalmente si los montos deben enmascararse en la UI.
+            val hideAmounts by securityViewModel.hideAmounts.collectAsState()
+            CompositionLocalProvider(LocalAmountsHidden provides hideAmounts) {
+                MainAppShell()
+            }
+        }
     }
 }
 

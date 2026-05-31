@@ -32,6 +32,7 @@ import com.example.data.entity.TransactionEntity
 import com.example.ui.components.CategoryChip
 import com.example.ui.components.EmptyState
 import com.example.ui.components.MainTopBar
+import com.example.ui.components.PrivacyAmountText
 import com.example.ui.theme.ExcelGreen
 import com.example.ui.theme.ExcelRed
 import com.example.ui.viewmodel.FinanceViewModel
@@ -195,6 +196,58 @@ fun MovimientosScreen(
                 }
             }
 
+            // --- RESUMEN DE LO FILTRADO ---
+            val filteredIncome = transactionList.filter { it.type == "INCOME" }.sumOf { it.amount }
+            val filteredExpense = transactionList.filter { it.type == "EXPENSE" }.sumOf { it.amount }
+            val filteredBalance = filteredIncome - filteredExpense
+            if (transactionList.isNotEmpty()) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp)
+                        .testTag("movimientos_summary_card"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Ingresos (filtro)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            PrivacyAmountText(
+                                amount = FormatUtils.formatCLP(filteredIncome),
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = ExcelGreen),
+                                color = ExcelGreen,
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Gastos (filtro)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            PrivacyAmountText(
+                                amount = FormatUtils.formatCLP(filteredExpense),
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = ExcelRed),
+                                color = ExcelRed,
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                            Text("Balance (filtro)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            PrivacyAmountText(
+                                amount = FormatUtils.formatCLP(filteredBalance),
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (filteredBalance >= 0) ExcelGreen else ExcelRed
+                                ),
+                                color = if (filteredBalance >= 0) ExcelGreen else ExcelRed,
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             // --- LEDGER TRANSACTIONS LIST ---
             if (transactionList.isEmpty()) {
                 EmptyState(
@@ -309,12 +362,16 @@ fun MovimientosScreen(
                                     val amountText = if (tx.type == "INCOME") "+ $formattedVal" else "- $formattedVal"
                                     val amountColor = if (tx.type == "INCOME") ExcelGreen else ExcelRed
 
-                                    Text(
-                                        text = amountText,
+                                    PrivacyAmountText(
+                                        amount = amountText,
                                         style = MaterialTheme.typography.titleMedium.copy(
                                             color = amountColor,
                                             fontWeight = FontWeight.Bold
-                                        )
+                                        ),
+                                        color = amountColor,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                     Row(
                                         horizontalArrangement = Arrangement.spacedBy(4.dp),

@@ -18,6 +18,8 @@ import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.LockReset
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -49,6 +51,7 @@ fun SecuritySettingsCard(
     val isPinSet by securityViewModel.isPinSet.collectAsState()
     val biometricEnabled by securityViewModel.biometricEnabled.collectAsState()
     val autoLockMinutes by securityViewModel.autoLockMinutes.collectAsState()
+    val hideAmounts by securityViewModel.hideAmounts.collectAsState()
     val biometricAvailable = remember { securityViewModel.biometricAvailable() }
 
     var showSetup by remember { mutableStateOf(false) }
@@ -90,6 +93,35 @@ fun SecuritySettingsCard(
                         color = if (isPinSet) ExcelGreen else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
                 }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+            // Privacidad: ocultar montos sensibles (independiente del PIN, solo presentación).
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (hideAmounts) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                    contentDescription = null,
+                    tint = ExcelDarkBlue,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Ocultar montos",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                    Text(
+                        "Enmascara saldos e importes en toda la app",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                }
+                Switch(
+                    checked = hideAmounts,
+                    onCheckedChange = { securityViewModel.setHideAmounts(it) },
+                    modifier = Modifier.testTag("hide_amounts_switch")
+                )
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))

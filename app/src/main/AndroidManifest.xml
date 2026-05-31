@@ -5,6 +5,10 @@
     <!-- Biometría (acceso de conveniencia con fallback a PIN). -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
+    <!-- Internet: solo se usa para actualizar precios de mercado cuando hay una API key
+         configurada. Sin key, la app funciona completamente offline con precios manuales. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"

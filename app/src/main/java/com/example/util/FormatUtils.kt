@@ -46,4 +46,39 @@ object FormatUtils {
         val formatter = DecimalFormat("+0.00%;-0.00%", percentSymbols)
         return formatter.format(sanitize(value))
     }
+
+    // --- Formato compacto para tarjetas pequeñas (evita que los montos se corten) ---
+
+    private val clpCompactSymbols = DecimalFormatSymbols(Locale.US).apply { decimalSeparator = ',' }
+    private val usdCompactSymbols = DecimalFormatSymbols(Locale.US).apply { decimalSeparator = '.' }
+
+    /**
+     * Formato CLP compacto: `CLP 1,09M`, `CLP 748,8K`. Para montos pequeños usa el formato CLP
+     * completo. Pensado para tarjetas KPI estrechas donde el número no debe partirse.
+     */
+    fun formatCLPCompact(amount: Double): String {
+        val v = sanitize(amount)
+        val abs = kotlin.math.abs(v)
+        val sign = if (v < 0) "-" else ""
+        return when {
+            abs >= 1_000_000.0 -> "CLP $sign${DecimalFormat("0.##", clpCompactSymbols).format(abs / 1_000_000.0)}M"
+            abs >= 10_000.0 -> "CLP $sign${DecimalFormat("0.#", clpCompactSymbols).format(abs / 1_000.0)}K"
+            else -> formatCLP(v)
+        }
+    }
+
+    /**
+     * Formato USD compacto: `USD 3.58K`, `USD 1.09M`. Para montos pequeños usa el formato USD
+     * completo con dos decimales.
+     */
+    fun formatUSDCompact(amount: Double): String {
+        val v = sanitize(amount)
+        val abs = kotlin.math.abs(v)
+        val sign = if (v < 0) "-" else ""
+        return when {
+            abs >= 1_000_000.0 -> "USD $sign${DecimalFormat("0.00", usdCompactSymbols).format(abs / 1_000_000.0)}M"
+            abs >= 10_000.0 -> "USD $sign${DecimalFormat("0.00", usdCompactSymbols).format(abs / 1_000.0)}K"
+            else -> formatUSD(v)
+        }
+    }
 }
