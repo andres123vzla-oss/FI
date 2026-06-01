@@ -1,5 +1,7 @@
 package com.example.ui.components
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.snap
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -19,6 +21,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.ui.theme.LocalReducedMotion
+import com.example.ui.theme.Motion
 
 /**
  * Estado global de privacidad: cuando es `true`, los montos sensibles se enmascaran en la UI.
@@ -58,19 +62,42 @@ fun PrivacyAmountText(
     prefix: String = "",
 ) {
     val hidden = LocalAmountsHidden.current
-    Text(
-        text = if (hidden) MASK else (prefix + amount),
-        // Números tabulares: columnas de cifras alineadas y estables.
-        modifier = modifier.semantics {
-            if (hidden) contentDescription = "Monto oculto"
-        },
-        style = style.copy(fontFeatureSettings = "tnum"),
-        color = color,
-        maxLines = maxLines,
-        softWrap = softWrap,
-        overflow = overflow,
-        textAlign = textAlign,
-    )
+    val reduced = LocalReducedMotion.current
+
+    // Text reutilizable para ambos estados del Crossfade: MISMO style/maxLines/softWrap/tnum,
+    // de modo que el layout sea idéntico oculto o visible (sin reflow ni cambio de tamaño).
+    val content: @Composable (Boolean) -> Unit = { isHidden ->
+        Text(
+            text = if (isHidden) MASK else (prefix + amount),
+            // Números tabulares: columnas de cifras alineadas y estables.
+            modifier = modifier.semantics {
+                // El contentDescription "Monto oculto" se mantiene durante toda la transición
+                // del estado oculto, para no filtrar el valor real a TalkBack.
+                if (isHidden) contentDescription = "Monto oculto"
+            },
+            style = style.copy(fontFeatureSettings = "tnum"),
+            color = color,
+            maxLines = maxLines,
+            softWrap = softWrap,
+            overflow = overflow,
+            textAlign = textAlign,
+        )
+    }
+
+    if (reduced) {
+        // Reduce movimiento: sin Crossfade, snap directo al estado actual.
+        content(hidden)
+    } else {
+        Crossfade(
+            targetState = hidden,
+            // MITIGACIÓN B1: solo se anima oculto→visible. Al pasar a oculto (target = true)
+            // el cambio es instantáneo (snap) para que el valor desaparezca sin diluirse.
+            animationSpec = if (hidden) snap() else Motion.fast(),
+            label = "reveal",
+        ) { isHidden ->
+            content(isHidden)
+        }
+    }
 }
 
 /**
@@ -96,10 +123,19 @@ fun AmountVisibilityToggle(
                 stateDescription = if (hidden) "Montos ocultos" else "Montos visibles"
             },
     ) {
-        Icon(
-            imageVector = if (hidden) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-            contentDescription = null,
-            tint = tint,
-        )
+        // Crossfade entre los dos íconos (NO AnimatedContent). La semántica vive en el
+        // IconButton padre; cada Icon expone contentDescription = null para no duplicarla.
+        val reduced = LocalReducedMotion.current
+        Crossfade(
+            targetState = hidden,
+            animationSpec = if (reduced) snap() else Motion.fast(),
+            label = "toggleIcon",
+        ) { isHidden ->
+            Icon(
+                imageVector = if (isHidden) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                contentDescription = null,
+                tint = tint,
+            )
+        }
     }
 }

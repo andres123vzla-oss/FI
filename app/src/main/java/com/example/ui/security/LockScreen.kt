@@ -1,5 +1,8 @@
 package com.example.ui.security
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -31,12 +35,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.security.SecurityViewModel
+import com.example.ui.theme.Motion
+import com.example.ui.theme.rememberReducedMotion
+import kotlin.math.roundToInt
 
 /**
  * Pantalla de bloqueo. Se muestra cuando hay PIN configurado y la app está bloqueada,
@@ -53,6 +63,21 @@ fun LockScreen(
 ) {
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+
+    // Movimiento: scale-in de los dots y shake en PIN incorrecto (respeta "reducir movimiento").
+    val reducedMotion = rememberReducedMotion()
+    var errorNonce by remember { mutableStateOf(0) }
+    val shakeX = remember { Animatable(0f) }
+    val density = LocalDensity.current
+    LaunchedEffect(errorNonce) {
+        if (errorNonce > 0 && !reducedMotion) {
+            val amp = with(density) { 12.dp.toPx() }
+            shakeX.snapTo(0f)
+            listOf(-1f, 1f, -0.7f, 0.7f, -0.35f, 0.35f, 0f).forEach { factor ->
+                shakeX.animateTo(factor * amp, tween(durationMillis = 40, easing = LinearEasing))
+            }
+        }
+    }
 
     val biometricEnabled by securityViewModel.biometricEnabled.collectAsState()
     val biometricAvailable = remember { securityViewModel.biometricAvailable() }
@@ -109,7 +134,8 @@ fun LockScreen(
             // Indicadores de dígitos (no se muestra el PIN en claro).
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.offset { IntOffset(shakeX.value.roundToInt(), 0) }
             ) {
                 if (pin.isEmpty()) {
                     Text(
@@ -120,12 +146,7 @@ fun LockScreen(
                 } else {
                     val visibleDots = pin.length.coerceAtMost(SecurityViewModel.MAX_PIN_LENGTH)
                     repeat(visibleDots) {
-                        Box(
-                            modifier = Modifier
-                                .size(14.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary)
-                        )
+                        PinDot(reduced = reducedMotion)
                     }
                 }
             }
@@ -164,6 +185,7 @@ fun LockScreen(
                         if (!success) {
                             error = err
                             pin = ""
+                            errorNonce++
                         }
                     }
                 },
@@ -187,4 +209,26 @@ fun LockScreen(
             }
         }
     }
+}
+
+/**
+ * Punto del PIN con entrada "scale-in" suave al aparecer. Solo anima la escala (no el tamaño),
+ * por lo que el ancho del layout es estable. No revela el valor ni la magnitud del PIN.
+ */
+@Composable
+private fun PinDot(reduced: Boolean) {
+    val scale = remember { Animatable(if (reduced) 1f else 0.6f) }
+    LaunchedEffect(Unit) {
+        if (!reduced) scale.animateTo(1f, Motion.fast())
+    }
+    Box(
+        modifier = Modifier
+            .size(14.dp)
+            .graphicsLayer {
+                scaleX = scale.value
+                scaleY = scale.value
+            }
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.primary)
+    )
 }

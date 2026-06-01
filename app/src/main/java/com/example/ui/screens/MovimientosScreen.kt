@@ -6,9 +6,11 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -31,8 +33,10 @@ import com.example.data.entity.CategoryEntity
 import com.example.data.entity.TransactionEntity
 import com.example.ui.components.CategoryChip
 import com.example.ui.components.EmptyState
+import com.example.ui.components.FinanceCard
 import com.example.ui.components.MainTopBar
 import com.example.ui.components.PrivacyAmountText
+import com.example.ui.components.pressScale
 import com.example.ui.theme.ExcelGreen
 import com.example.ui.theme.ExcelRed
 import com.example.ui.viewmodel.FinanceViewModel
@@ -65,9 +69,12 @@ fun MovimientosScreen(
     val monthNames = listOf("Todos", "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic")
     val yearsOptions = listOf("Todos", "2025", "2026", "2027")
 
+    val transactionsListState = rememberLazyListState()
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         floatingActionButton = {
+            val fabInteraction = remember { MutableInteractionSource() }
             FloatingActionButton(
                 onClick = {
                     selectedTransactionToEdit = null
@@ -75,14 +82,18 @@ fun MovimientosScreen(
                 },
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.testTag("fab_add_tx")
+                interactionSource = fabInteraction,
+                modifier = Modifier
+                    .testTag("fab_add_tx")
+                    .pressScale(target = 0.96f, interactionSource = fabInteraction)
             ) {
                 Icon(Icons.Default.Add, contentDescription = "Agregar Movimiento")
             }
         },
         topBar = {
             MainTopBar(
-                title = "Libro de Movimientos"
+                title = "Libro de Movimientos",
+                elevated = transactionsListState.canScrollBackward
             )
         }
     ) { innerPadding ->
@@ -93,15 +104,13 @@ fun MovimientosScreen(
                 .background(MaterialTheme.colorScheme.background)
         ) {
             // --- SEARCH BAR & TOGGLES ---
-            Card(
+            FinanceCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(12.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                contentPadding = PaddingValues(12.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // Search bar text field
@@ -150,7 +159,7 @@ fun MovimientosScreen(
                         )
 
                         // Spacer divider
-                        Box(modifier = Modifier.size(width = 1.dp, height = 24.dp).background(Color.LightGray))
+                        Box(modifier = Modifier.size(width = 1.dp, height = 24.dp).background(MaterialTheme.colorScheme.outlineVariant))
 
                         // Year Pick
                         yearsOptions.forEachIndexed { index, yr ->
@@ -163,7 +172,7 @@ fun MovimientosScreen(
                         }
 
                         // Divider
-                        Box(modifier = Modifier.size(width = 1.dp, height = 24.dp).background(Color.LightGray))
+                        Box(modifier = Modifier.size(width = 1.dp, height = 24.dp).background(MaterialTheme.colorScheme.outlineVariant))
 
                         // Category Dropdown Filter Selection list
                         val availableFilterCats = listOf("ALL") + rawCategories.map { it.name }.distinct()
@@ -200,23 +209,19 @@ fun MovimientosScreen(
             val filteredExpense = transactionList.filter { it.type == "EXPENSE" }.sumOf { it.amount }
             val filteredBalance = filteredIncome - filteredExpense
             if (transactionList.isNotEmpty()) {
-                Card(
+                FinanceCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp)
                         .testTag("movimientos_summary_card"),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    contentPadding = PaddingValues(12.dp)
                 ) {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Ingresos (filtro)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            Text("Ingresos (filtro)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             PrivacyAmountText(
                                 amount = FormatUtils.formatCLP(filteredIncome),
                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = ExcelGreen),
@@ -224,7 +229,7 @@ fun MovimientosScreen(
                             )
                         }
                         Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Gastos (filtro)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            Text("Gastos (filtro)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             PrivacyAmountText(
                                 amount = FormatUtils.formatCLP(filteredExpense),
                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = ExcelRed),
@@ -232,7 +237,7 @@ fun MovimientosScreen(
                             )
                         }
                         Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                            Text("Balance (filtro)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            Text("Balance (filtro)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             PrivacyAmountText(
                                 amount = FormatUtils.formatCLP(filteredBalance),
                                 style = MaterialTheme.typography.bodyMedium.copy(
@@ -256,6 +261,7 @@ fun MovimientosScreen(
                 )
             } else {
                 LazyColumn(
+                    state = transactionsListState,
                     modifier = Modifier
                         .weight(1f)
                         .padding(horizontal = 12.dp)
@@ -268,22 +274,19 @@ fun MovimientosScreen(
                         val colHex = categoryObj?.colorHex ?: "#1F4E79"
                         val iconName = categoryObj?.iconName ?: "Category"
 
-                        Card(
+                        FinanceCard(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    selectedTransactionToEdit = tx
-                                    showAddEditDialog = true
-                                }
+                                .animateItem()
                                 .testTag("transaction_item_${tx.id}"),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                            contentPadding = PaddingValues(12.dp),
+                            onClick = {
+                                selectedTransactionToEdit = tx
+                                showAddEditDialog = true
+                            }
                         ) {
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
+                                modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
@@ -302,7 +305,7 @@ fun MovimientosScreen(
                                     Box(
                                         modifier = Modifier
                                             .size(40.dp)
-                                            .clip(RoundedCornerShape(10.dp))
+                                            .clip(MaterialTheme.shapes.small)
                                             .background(catColor.copy(alpha = 0.15f)),
                                         contentAlignment = Alignment.Center
                                     ) {
@@ -339,13 +342,13 @@ fun MovimientosScreen(
                                                 Icon(
                                                     Icons.Default.DateRange,
                                                     contentDescription = null,
-                                                    tint = Color.Gray,
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     modifier = Modifier.size(12.dp)
                                                 )
                                                 Spacer(modifier = Modifier.width(2.dp))
                                                 Text(
                                                     text = tx.date,
-                                                    style = MaterialTheme.typography.bodySmall.copy(color = Color.Gray, fontSize = 11.sp)
+                                                    style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                                                 )
                                             }
                                         }
@@ -537,12 +540,12 @@ fun AddEditTransactionFormDialog(
                     Tab(
                         selected = type == "INCOME",
                         onClick = { type = "INCOME" },
-                        text = { Text("Ingresos", fontWeight = FontWeight.Bold, color = if (type == "INCOME") ExcelGreen else Color.Gray) }
+                        text = { Text("Ingresos", fontWeight = FontWeight.Bold, color = if (type == "INCOME") ExcelGreen else MaterialTheme.colorScheme.onSurfaceVariant) }
                     )
                     Tab(
                         selected = type == "EXPENSE",
                         onClick = { type = "EXPENSE" },
-                        text = { Text("Gastos", fontWeight = FontWeight.Bold, color = if (type == "EXPENSE") ExcelRed else Color.Gray) }
+                        text = { Text("Gastos", fontWeight = FontWeight.Bold, color = if (type == "EXPENSE") ExcelRed else MaterialTheme.colorScheme.onSurfaceVariant) }
                      )
                 }
 

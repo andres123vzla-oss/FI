@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.app.DatePickerDialog
 import android.widget.DatePicker
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -43,11 +45,16 @@ import com.example.ui.components.CategoryChip
 import com.example.ui.components.KpiCard
 import com.example.ui.components.MainTopBar
 import com.example.ui.components.EmptyState
+import com.example.ui.components.FinanceCard
+import com.example.ui.components.StatusPill
+import com.example.ui.components.CountUpAmountText
 import com.example.ui.components.PrivacyAmountText
 import com.example.ui.security.ConfirmPinDialog
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.FinanceViewModel
+import com.example.ui.viewmodel.SymbolSearchState
 import com.example.util.FormatUtils
+import kotlinx.coroutines.launch
 import com.example.util.IconMapper
 import java.text.SimpleDateFormat
 import java.util.*
@@ -64,6 +71,8 @@ fun DashboardScreen(
     val isPinSet by securityViewModel.isPinSet.collectAsState()
     val hideAmounts by securityViewModel.hideAmounts.collectAsState()
     val unbudgetedAlerts by viewModel.unbudgetedAlertsFlow.collectAsState()
+    val allTransactions by viewModel.allTransactions.collectAsState()
+    val allInvestments by viewModel.allInvestments.collectAsState()
 
     val selectedMonth by viewModel.selectedMonth.collectAsState()
     val selectedYear by viewModel.selectedYear.collectAsState()
@@ -106,6 +115,17 @@ fun DashboardScreen(
             }
         )
 
+        // Estado vacío profesional: si no hay ningún dato financiero (ni movimientos ni activos),
+        // no se muestran KPIs ni números; se invita a empezar o a restaurar datos demo.
+        val isCompletelyEmpty = allTransactions.isEmpty() && allInvestments.isEmpty()
+        if (isCompletelyEmpty) {
+            DashboardEmptyState(
+                modifier = Modifier.weight(1f),
+                onAddIncome = { dialogType = "INCOME"; showAddDialog = true },
+                onAddExpense = { dialogType = "EXPENSE"; showAddDialog = true },
+                onAddStock = { showAddStockDialog = true },
+            )
+        } else
         // Scrollable Main Content
         Column(
             modifier = Modifier
@@ -115,16 +135,12 @@ fun DashboardScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // --- Month & Year Selector ---
-            Card(
+            FinanceCard(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                contentPadding = PaddingValues(12.dp)
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -190,29 +206,34 @@ fun DashboardScreen(
                 )
             }
 
-            // --- HERO BALANCE CARD (Sophisticated Dark HTML style) ---
-            Card(
+            // --- HERO BALANCE CARD (degradado estático azul → cyan) ---
+            val heroShape = MaterialTheme.shapes.large
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("hero_balance_card"),
-                shape = RoundedCornerShape(32.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
-                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                    .testTag("hero_balance_card")
+                    .clip(heroShape)
+                    .background(
+                        Brush.linearGradient(listOf(AccentBlue, AccentCyan))
+                    )
             ) {
+                // Brillo radial decorativo (estático, sutil) en la esquina superior.
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(Color.White.copy(alpha = 0.10f), Color.Transparent),
+                                center = Offset(x = Float.POSITIVE_INFINITY, y = 0f),
+                                radius = 600f,
+                            )
+                        )
+                )
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(24.dp)
                 ) {
-                    // Decorative background bubble
-                    Box(
-                        modifier = Modifier
-                            .size(130.dp)
-                            .align(Alignment.TopEnd)
-                            .offset(x = 35.dp, y = (-35).dp)
-                            .background(Color.White.copy(alpha = 0.08f), shape = CircleShape)
-                    )
-
                     Column(
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -225,8 +246,9 @@ fun DashboardScreen(
                             )
                         )
                         Spacer(modifier = Modifier.height(6.dp))
-                        PrivacyAmountText(
-                            amount = FormatUtils.formatCLP(dashboardData.balanceTotal),
+                        CountUpAmountText(
+                            value = dashboardData.balanceTotal,
+                            formatter = FormatUtils::formatCLP,
                             style = MaterialTheme.typography.headlineLarge.copy(
                                 color = Color.White,
                                 fontWeight = FontWeight.Black,
@@ -292,15 +314,12 @@ fun DashboardScreen(
             }
 
             // --- MÉTRICAS INTELIGENTES DEL MES ---
-            Card(
+            FinanceCard(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("dashboard_metrics_card"),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    .testTag("dashboard_metrics_card")
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -315,23 +334,10 @@ fun DashboardScreen(
                         val healthColor = when (health) {
                             FinancialHealth.EXCELENTE -> ExcelGreen
                             FinancialHealth.BUENO -> ExcelMediumBlue
-                            FinancialHealth.AJUSTADO -> Color(0xFFEF6C00)
+                            FinancialHealth.AJUSTADO -> LocalFinanceColors.current.warning
                             FinancialHealth.CRITICO -> ExcelRed
                         }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(healthColor.copy(alpha = 0.15f))
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = health.label,
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    color = healthColor,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            )
-                        }
+                        StatusPill(text = health.label, color = healthColor)
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -418,12 +424,11 @@ fun DashboardScreen(
             }
 
             // --- Quick Actions ---
-            Card(
+            FinanceCard(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
+                contentPadding = PaddingValues(12.dp)
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
+                Column {
                     Text(
                         "Acciones Rápidas",
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary),
@@ -439,7 +444,7 @@ fun DashboardScreen(
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("quick_add_income"),
-                            shape = RoundedCornerShape(8.dp),
+                            shape = MaterialTheme.shapes.small,
                             contentPadding = PaddingValues(vertical = 12.dp)
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -452,7 +457,7 @@ fun DashboardScreen(
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("quick_add_expense"),
-                            shape = RoundedCornerShape(8.dp),
+                            shape = MaterialTheme.shapes.small,
                             contentPadding = PaddingValues(vertical = 12.dp)
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -465,7 +470,7 @@ fun DashboardScreen(
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("quick_add_stock"),
-                            shape = RoundedCornerShape(8.dp),
+                            shape = MaterialTheme.shapes.small,
                             contentPadding = PaddingValues(vertical = 12.dp)
                         ) {
                             Icon(Icons.AutoMirrored.Filled.ShowChart, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -477,13 +482,10 @@ fun DashboardScreen(
             }
 
             // --- Chart 1: Month comparison (Ingresos vs Gastos) ---
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            FinanceCard(
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column {
                     Text(
                         "📈 Comparativa Mensual (Ingresos vs Gastos)",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
@@ -491,11 +493,13 @@ fun DashboardScreen(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     if (dashboardData.monthlySummaries.isEmpty()) {
-                        Text("No hay suficientes datos para el gráfico.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        Text("No hay suficientes datos para el gráfico.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         // Custom Canvas-drawn comparison bars
                         val summariesList = dashboardData.monthlySummaries
                         val maxVal = (summariesList.maxOfOrNull { maxOf(it.income, it.expense) } ?: 1.0).coerceAtLeast(100.0)
+                        // Color de las gridlines (capturado fuera del DrawScope del Canvas).
+                        val gridlineColor = MaterialTheme.colorScheme.outlineVariant
 
                         Canvas(
                             modifier = Modifier
@@ -517,7 +521,7 @@ fun DashboardScreen(
 
                                 // Draw standard gridlines
                                 drawLine(
-                                    color = Color.LightGray.copy(alpha = 0.4f),
+                                    color = gridlineColor,
                                     start = Offset(0f, canvasHeight - 25.dp.toPx()),
                                     end = Offset(canvasWidth, canvasHeight - 25.dp.toPx()),
                                     strokeWidth = 1.dp.toPx()
@@ -547,7 +551,7 @@ fun DashboardScreen(
                             summariesList.forEach { sum ->
                                 Text(
                                     text = "${monthNames[sum.month - 1].take(3)} '${sum.year.toString().takeLast(2)}",
-                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.Gray),
+                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant),
                                     modifier = Modifier.width(55.dp),
                                     textAlign = TextAlign.Center
                                 )
@@ -573,13 +577,10 @@ fun DashboardScreen(
             }
 
             // --- Chart 2: Category Breakdown list ---
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            FinanceCard(
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column {
                     Text(
                         "📌 Desglose de Gastos por Categoría",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
@@ -588,26 +589,27 @@ fun DashboardScreen(
 
                     // Alertas: categorías sin presupuesto con gasto relevante (sin exponer montos).
                     if (unbudgetedAlerts.isNotEmpty()) {
+                        val warningColor = LocalFinanceColors.current.warning
                         unbudgetedAlerts.forEach { alert ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0xFFEF6C00).copy(alpha = 0.1f))
+                                    .clip(MaterialTheme.shapes.small)
+                                    .background(warningColor.copy(alpha = 0.1f))
                                     .padding(horizontal = 10.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
                                     Icons.Default.Warning,
                                     contentDescription = null,
-                                    tint = Color(0xFFEF6C00),
+                                    tint = warningColor,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "${alert.categoryName} sin presupuesto · ${FormatUtils.formatPercentage(alert.percentOfTotal)} del gasto",
                                     style = MaterialTheme.typography.bodySmall.copy(
-                                        color = Color(0xFFEF6C00),
+                                        color = warningColor,
                                         fontWeight = FontWeight.Medium
                                     ),
                                     maxLines = 1,
@@ -686,8 +688,13 @@ fun DashboardScreen(
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 // Horizontal Bar represent percentage
+                                val animatedPct by animateFloatAsState(
+                                    targetValue = item.percentage.toFloat(),
+                                    animationSpec = Motion.long(),
+                                    label = "categoryPct",
+                                )
                                 LinearProgressIndicator(
-                                    progress = { item.percentage.toFloat() },
+                                    progress = { animatedPct },
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(8.dp)
@@ -720,6 +727,7 @@ fun DashboardScreen(
     // 2. Add Stock investment dialog
     if (showAddStockDialog) {
         AddStockDialog(
+            viewModel = viewModel,
             onDismiss = { showAddStockDialog = false },
             onSave = { ticker, name, qty, buyPrice, currentPrice ->
                 viewModel.addStock(ticker, name, qty, buyPrice, currentPrice)
@@ -772,6 +780,96 @@ fun DashboardScreen(
 }
 
 /**
+ * Estado vacío del Dashboard: se muestra cuando no existe ningún dato financiero. No expone
+ * números inventados; invita a registrar el primer movimiento/activo. "Restaurar datos demo"
+ * sigue disponible (manual, con reautenticación) desde Ajustes.
+ */
+@Composable
+private fun DashboardEmptyState(
+    onAddIncome: () -> Unit,
+    onAddExpense: () -> Unit,
+    onAddStock: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(88.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Default.AccountBalanceWallet,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(44.dp),
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+        Text(
+            text = "Aún no hay datos financieros",
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "Registra tu primer ingreso, gasto o inversión para empezar. " +
+                "Puedes cargar datos de ejemplo desde Ajustes → Restaurar datos demo.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(24.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(
+                onClick = onAddIncome,
+                colors = ButtonDefaults.buttonColors(containerColor = ExcelGreen),
+                modifier = Modifier.weight(1f).testTag("empty_add_income"),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(vertical = 12.dp),
+            ) {
+                Icon(Icons.Default.ArrowUpward, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Ingreso", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+            Button(
+                onClick = onAddExpense,
+                colors = ButtonDefaults.buttonColors(containerColor = ExcelRed),
+                modifier = Modifier.weight(1f).testTag("empty_add_expense"),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(vertical = 12.dp),
+            ) {
+                Icon(Icons.Default.ArrowDownward, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Gasto", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+            Button(
+                onClick = onAddStock,
+                colors = ButtonDefaults.buttonColors(containerColor = ExcelMediumBlue),
+                modifier = Modifier.weight(1f).testTag("empty_add_stock"),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(vertical = 12.dp),
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ShowChart, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Acción", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+/**
  * Celda de métrica reutilizable del dashboard. Si [sensitive] es true, el valor se enmascara
  * cuando la privacidad global está activa; los porcentajes y estados se marcan como no sensibles.
  */
@@ -785,7 +883,7 @@ private fun MetricCell(
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(MaterialTheme.shapes.small)
             .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f))
             .padding(12.dp)
     ) {
@@ -882,8 +980,18 @@ fun AddTransactionDialog(
                 Text(
                     "Ingresa los detalles del movimiento para el panel chileno.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                // Sin categorías de este tipo: guía al usuario (la app arranca sin categorías).
+                if (categories.isEmpty()) {
+                    Text(
+                        "No tienes categorías de este tipo todavía. Crea una en Ajustes → Categorías para poder registrar el movimiento.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ExcelRed,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
 
                 if (errorMsg.isNotEmpty()) {
                     Text(errorMsg, color = ExcelRed, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
@@ -982,6 +1090,7 @@ fun AddTransactionDialog(
 
 @Composable
 fun AddStockDialog(
+    viewModel: FinanceViewModel,
     onDismiss: () -> Unit,
     onSave: (ticker: String, name: String, qty: Double, buyPrice: Double, currentPrice: Double) -> Unit
 ) {
@@ -992,6 +1101,12 @@ fun AddStockDialog(
     var currentPriceStr by remember { mutableStateOf("") }
 
     var errorMsg by remember { mutableStateOf("") }
+
+    // Buscador de activos (Finnhub /search). Degrada a entrada manual si no hay API key.
+    val searchState by viewModel.symbolSearchState.collectAsState()
+    val query by viewModel.symbolQuery.collectAsState()
+    val scope = rememberCoroutineScope()
+    DisposableEffect(Unit) { onDispose { viewModel.clearSymbolSearch() } }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1006,17 +1121,78 @@ fun AddStockDialog(
                 Text(
                     "Registra inversiones de bolsa en USD. Se admiten fracciones de acciones.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 if (errorMsg.isNotEmpty()) {
                     Text(errorMsg, color = ExcelRed, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
                 }
 
+                // --- Buscador de activos: encuentra cualquier símbolo por nombre o ticker ---
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { viewModel.onSymbolQueryChange(it) },
+                    label = { Text("Buscar activo (nombre o ticker)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("symbol_search_field"),
+                    shape = RoundedCornerShape(8.dp),
+                    trailingIcon = {
+                        if (searchState is SymbolSearchState.Loading) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        }
+                    }
+                )
+                when (val s = searchState) {
+                    is SymbolSearchState.NeedsApiKey -> Text(
+                        "Configura una API key para buscar. Puedes ingresar el ticker manualmente.",
+                        color = ExcelMediumBlue,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    is SymbolSearchState.Empty -> Text(
+                        "Sin resultados. Revisa el texto o ingresa el ticker manualmente.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    is SymbolSearchState.Results -> Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 180.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        s.matches.forEach { m ->
+                            Surface(
+                                onClick = {
+                                    ticker = m.symbol
+                                    companyName = m.description
+                                    viewModel.onSymbolQueryChange(m.symbol)
+                                    scope.launch {
+                                        viewModel.prefillPrice(m.symbol)?.let { p ->
+                                            currentPriceStr = p.toString()
+                                            if (purchasePriceStr.isBlank()) purchasePriceStr = p.toString()
+                                        }
+                                    }
+                                },
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                shape = MaterialTheme.shapes.small,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp)
+                                    .testTag("symbol_result_${m.symbol}")
+                            ) {
+                                Column(Modifier.padding(vertical = 6.dp, horizontal = 8.dp)) {
+                                    Text(m.description, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("${m.symbol} · ${m.type}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                    else -> {}
+                }
+
                 OutlinedTextField(
                     value = ticker,
                     onValueChange = { ticker = it.uppercase() },
-                    label = { Text("Ticker (Ej: AAPL)") },
+                    label = { Text("Ticker seleccionado (editable)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("ticker_input"),
                     shape = RoundedCornerShape(8.dp)

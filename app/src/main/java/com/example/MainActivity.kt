@@ -4,6 +4,14 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -20,9 +28,13 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.Lifecycle
@@ -49,6 +61,9 @@ import com.example.ui.screens.MovimientosScreen
 import com.example.ui.screens.PortafolioScreen
 import com.example.ui.screens.PresupuestoScreen
 import com.example.ui.components.LocalAmountsHidden
+import com.example.ui.theme.LocalReducedMotion
+import com.example.ui.theme.Motion
+import com.example.ui.theme.rememberReducedMotion
 import com.example.ui.security.LockScreen
 import com.example.ui.security.SetupLockScreen
 import androidx.compose.runtime.CompositionLocalProvider
@@ -117,10 +132,46 @@ fun AppRoot(activity: FragmentActivity) {
         LockGate.UNLOCKED -> {
             // Privacidad: expone globalmente si los montos deben enmascararse en la UI.
             val hideAmounts by securityViewModel.hideAmounts.collectAsState()
-            CompositionLocalProvider(LocalAmountsHidden provides hideAmounts) {
-                MainAppShell()
+            CompositionLocalProvider(
+                LocalAmountsHidden provides hideAmounts,
+                LocalReducedMotion provides rememberReducedMotion(),
+            ) {
+                // Entrada animada al desbloquear (solo ENTRADA, sin estado de salida posible).
+                // Vive dentro de la rama UNLOCKED: en un re-lock la rama se destruye y no queda
+                // ningún "linger". No se anima ni envuelve el when(gate).
+                UnlockedEntrance {
+                    MainAppShell()
+                }
             }
         }
+    }
+}
+
+/**
+ * Contenedor de entrada para el subárbol desbloqueado. Anima una sola vez (alpha + leve
+ * desplazamiento vertical) usando un [Animatable], nunca [androidx.compose.animation.AnimatedVisibility]:
+ * así no existe estado de salida que pudiera mantener visible el contenido durante un re-lock.
+ *
+ * Si "reducir movimiento" está activo, salta directo al estado final (alpha=1, sin desplazamiento).
+ */
+@Composable
+private fun UnlockedEntrance(content: @Composable () -> Unit) {
+    val reduced = LocalReducedMotion.current
+    val liftPx = with(LocalDensity.current) { 14.dp.toPx() }
+    val progress = remember { Animatable(if (reduced) 1f else 0f) }
+    LaunchedEffect(Unit) {
+        if (!reduced) {
+            progress.animateTo(1f, Motion.medium())
+        }
+    }
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier.graphicsLayer {
+            val a = progress.value
+            alpha = a
+            translationY = (1f - a) * liftPx
+        }
+    ) {
+        content()
     }
 }
 
@@ -158,9 +209,17 @@ fun MainAppShell() {
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
 
+                val reducedMotion = LocalReducedMotion.current
                 navItems.forEach { item ->
+                    val selected = currentRoute == item.route
+                    // Micro-escala del icono seleccionado (solo visual; no altera el área táctil).
+                    val iconScale by androidx.compose.animation.core.animateFloatAsState(
+                        targetValue = if (selected) 1f else 0.92f,
+                        animationSpec = Motion.fast(reducedMotion),
+                        label = "navIconScale",
+                    )
                     NavigationBarItem(
-                        selected = currentRoute == item.route,
+                        selected = selected,
                         onClick = {
                             if (currentRoute != item.route) {
                                 navController.navigate(item.route) {
@@ -175,7 +234,11 @@ fun MainAppShell() {
                         icon = {
                             Icon(
                                 imageVector = item.icon,
-                                contentDescription = item.title
+                                contentDescription = item.title,
+                                modifier = Modifier.graphicsLayer {
+                                    scaleX = iconScale
+                                    scaleY = iconScale
+                                }
                             )
                         },
                         label = {
@@ -201,10 +264,66 @@ fun MainAppShell() {
           }
         }
     ) { innerPadding ->
+        val reducedMotionNav = LocalReducedMotion.current
         NavHost(
             navController = navController,
             startDestination = BottomNavItem.Dashboard.route,
-            modifier = Modifier.padding(innerPadding)
+            modifier = Modifier.padding(innerPadding),
+            // Fade-through entre pestañas: leve fundido + escala de entrada; salida lineal y breve.
+            enterTransition = {
+                if (reducedMotionNav) {
+                    EnterTransition.None
+                } else {
+                    fadeIn(
+                        tween(
+                            durationMillis = Motion.Medium,
+                            delayMillis = 90,
+                            easing = Motion.EmphasizedEasing,
+                        )
+                    ) + scaleIn(
+                        initialScale = 0.97f,
+                        animationSpec = tween(
+                            durationMillis = Motion.Medium,
+                            delayMillis = 90,
+                            easing = Motion.EmphasizedEasing,
+                        ),
+                    )
+                }
+            },
+            exitTransition = {
+                if (reducedMotionNav) {
+                    ExitTransition.None
+                } else {
+                    fadeOut(tween(durationMillis = 90, easing = LinearEasing))
+                }
+            },
+            popEnterTransition = {
+                if (reducedMotionNav) {
+                    EnterTransition.None
+                } else {
+                    fadeIn(
+                        tween(
+                            durationMillis = Motion.Medium,
+                            delayMillis = 90,
+                            easing = Motion.EmphasizedEasing,
+                        )
+                    ) + scaleIn(
+                        initialScale = 0.97f,
+                        animationSpec = tween(
+                            durationMillis = Motion.Medium,
+                            delayMillis = 90,
+                            easing = Motion.EmphasizedEasing,
+                        ),
+                    )
+                }
+            },
+            popExitTransition = {
+                if (reducedMotionNav) {
+                    ExitTransition.None
+                } else {
+                    fadeOut(tween(durationMillis = 90, easing = LinearEasing))
+                }
+            },
         ) {
             composable(BottomNavItem.Dashboard.route) {
                 DashboardScreen(viewModel = viewModel)

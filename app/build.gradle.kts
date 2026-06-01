@@ -49,7 +49,10 @@ android {
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      // Endurecimiento de release: R8 reduce y ofusca el código (dificulta ingeniería inversa) y
+      // shrinkResources elimina recursos no usados. Reglas de conservación en proguard-rules.pro.
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
     }
@@ -99,6 +102,8 @@ dependencies {
   implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
+  // Cifrado en reposo de la base de datos financiera (SQLCipher sobre el SupportSQLite de Room).
+  implementation(libs.sqlcipher.android)
   // implementation(libs.coil.compose)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)

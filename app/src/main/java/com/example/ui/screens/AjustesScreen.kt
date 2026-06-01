@@ -1,9 +1,11 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -30,7 +32,9 @@ import com.example.data.entity.CategoryEntity
 import com.example.security.SecurityViewModel
 import com.example.ui.components.CategoryChip
 import com.example.ui.components.EmptyState
+import com.example.ui.components.FinanceCard
 import com.example.ui.components.MainTopBar
+import com.example.ui.components.pressScale
 import com.example.ui.security.ConfirmPinDialog
 import com.example.ui.security.SecuritySettingsCard
 import com.example.ui.theme.ExcelDarkBlue
@@ -68,10 +72,13 @@ fun AjustesScreen(
     val expensesCats = categories.filter { it.type == "EXPENSE" }
     val incomeCats = categories.filter { it.type == "INCOME" }
 
+    val contentScrollState = rememberScrollState()
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
+            val fabInteraction = remember { MutableInteractionSource() }
             FloatingActionButton(
                 onClick = {
                     selectedCategoryToEdit = null
@@ -79,14 +86,18 @@ fun AjustesScreen(
                 },
                 containerColor = ExcelDarkBlue,
                 contentColor = Color.White,
-                modifier = Modifier.testTag("fab_add_category")
+                interactionSource = fabInteraction,
+                modifier = Modifier
+                    .testTag("fab_add_category")
+                    .pressScale(target = 0.96f, interactionSource = fabInteraction)
             ) {
                 Icon(Icons.Default.Add, contentDescription = "Agregar Categoría")
             }
         },
         topBar = {
             MainTopBar(
-                title = "Configuración y Categorías"
+                title = "Configuración y Categorías",
+                elevated = contentScrollState.canScrollBackward
             )
         }
     ) { innerPadding ->
@@ -95,15 +106,14 @@ fun AjustesScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .background(MaterialTheme.colorScheme.background)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(contentScrollState)
         ) {
             // --- TOP SECTIONS FOR CATEGORIES ---
-            Card(
+            FinanceCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(12.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                contentPadding = PaddingValues(0.dp)
             ) {
                 Column {
                     TabRow(
@@ -113,12 +123,12 @@ fun AjustesScreen(
                         Tab(
                             selected = tabIndex == 0,
                             onClick = { tabIndex = 0 },
-                            text = { Text("Gastos (${expensesCats.size})", fontWeight = FontWeight.Bold, color = if (tabIndex == 0) ExcelRed else Color.Gray) }
+                            text = { Text("Gastos (${expensesCats.size})", fontWeight = FontWeight.Bold, color = if (tabIndex == 0) ExcelRed else MaterialTheme.colorScheme.onSurfaceVariant) }
                         )
                         Tab(
                             selected = tabIndex == 1,
                             onClick = { tabIndex = 1 },
-                            text = { Text("Ingresos (${incomeCats.size})", fontWeight = FontWeight.Bold, color = if (tabIndex == 1) ExcelGreen else Color.Gray) }
+                            text = { Text("Ingresos (${incomeCats.size})", fontWeight = FontWeight.Bold, color = if (tabIndex == 1) ExcelGreen else MaterialTheme.colorScheme.onSurfaceVariant) }
                         )
                     }
 
@@ -137,14 +147,19 @@ fun AjustesScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             activeList.forEach { cat ->
+                              Surface(
+                                  onClick = {
+                                      selectedCategoryToEdit = cat
+                                      showAddCategoryDialog = true
+                                  },
+                                  modifier = Modifier.fillMaxWidth(),
+                                  color = MaterialTheme.colorScheme.surfaceContainer,
+                                  shape = MaterialTheme.shapes.medium,
+                                  border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                              ) {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f), RoundedCornerShape(8.dp))
-                                        .clickable {
-                                            selectedCategoryToEdit = cat
-                                            showAddCategoryDialog = true
-                                        }
                                         .padding(10.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
@@ -175,7 +190,7 @@ fun AjustesScreen(
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
                                                 "Sist.",
-                                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp, color = Color.Gray, fontWeight = FontWeight.Bold),
+                                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold),
                                                 modifier = Modifier
                                                     .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(4.dp))
                                                     .padding(horizontal = 4.dp, vertical = 2.dp)
@@ -201,6 +216,7 @@ fun AjustesScreen(
                                         )
                                     }
                                 }
+                              }
                             }
                         }
                     }
@@ -222,15 +238,12 @@ fun AjustesScreen(
                 modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp)
             )
 
-            Card(
+            FinanceCard(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     Column {
@@ -241,71 +254,85 @@ fun AjustesScreen(
                         Text(
                             "Toda la información financiera se almacena localmente en el dispositivo. Protégela activando el bloqueo de la app con PIN y biometría.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color.Gray
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                     // Restore seeds button
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showResetSemillaConfirm = true }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Surface(
+                        onClick = { showResetSemillaConfirm = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        shape = MaterialTheme.shapes.medium,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     ) {
-                        Box(
+                        Row(
                             modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(ExcelDarkBlue.copy(alpha = 0.1f)),
-                            contentAlignment = Alignment.Center
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.CloudDownload, contentDescription = null, tint = ExcelDarkBlue)
-                        }
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Restaurar datos semilla",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
-                            )
-                            Text(
-                                "Carga los valores de prueba de Mayo 2026 del Excel original.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(MaterialTheme.shapes.small)
+                                    .background(ExcelDarkBlue.copy(alpha = 0.1f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.CloudDownload, contentDescription = null, tint = ExcelDarkBlue)
+                            }
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Restaurar datos semilla",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                                Text(
+                                    "Carga los valores de prueba de Mayo 2026 del Excel original.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
 
                     // Delete database button
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showDeleteAllConfirm = true }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Surface(
+                        onClick = { showDeleteAllConfirm = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        shape = MaterialTheme.shapes.medium,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     ) {
-                        Box(
+                        Row(
                             modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(ExcelRed.copy(alpha = 0.1f)),
-                            contentAlignment = Alignment.Center
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.DeleteForever, contentDescription = null, tint = ExcelRed)
-                        }
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Borrar todos los datos",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = ExcelRed)
-                            )
-                            Text(
-                                "Limpia todas las transacciones, metas y portafolios del sistema.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(MaterialTheme.shapes.small)
+                                    .background(ExcelRed.copy(alpha = 0.1f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.DeleteForever, contentDescription = null, tint = ExcelRed)
+                            }
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Borrar todos los datos",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = ExcelRed)
+                                )
+                                Text(
+                                    "Limpia todas las transacciones, metas y portafolios del sistema.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
@@ -467,7 +494,7 @@ fun AddEditCategoryFormDialog(
                 Text(
                     "Configura el comportamiento y el diseño visual de este rubro.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 // Category entry name
@@ -489,12 +516,12 @@ fun AddEditCategoryFormDialog(
                     Tab(
                         selected = type == "INCOME",
                         onClick = { type = "INCOME" },
-                        text = { Text("Ingresos", color = if (type == "INCOME") ExcelGreen else Color.Gray, fontWeight = FontWeight.Bold) }
+                        text = { Text("Ingresos", color = if (type == "INCOME") ExcelGreen else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold) }
                     )
                     Tab(
                         selected = type == "EXPENSE",
                         onClick = { type = "EXPENSE" },
-                        text = { Text("Gastos", color = if (type == "EXPENSE") ExcelRed else Color.Gray, fontWeight = FontWeight.Bold) }
+                        text = { Text("Gastos", color = if (type == "EXPENSE") ExcelRed else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold) }
                     )
                 }
 

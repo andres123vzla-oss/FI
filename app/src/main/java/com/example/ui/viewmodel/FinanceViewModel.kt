@@ -11,6 +11,9 @@ import com.example.data.entity.TransactionEntity
 import com.example.data.repository.FinanceRepository
 import com.example.data.market.MarketDataProvider
 import com.example.data.market.PriceResult
+import com.example.data.market.SymbolMatch
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import com.example.domain.BudgetAnalyzer
 import com.example.domain.BudgetLine
 import com.example.domain.BudgetRecommendation
@@ -39,6 +42,65 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     val marketCanRefresh: Boolean get() = marketRepo.canRefresh
     val marketModeLabel: String get() = marketRepo.modeLabel
 
+    /** ¿Hay una fuente remota que permita actualización en vivo? */
+    val isAutoRefreshAvailable: Boolean get() = marketRepo.canRefresh
+
+    /** Interruptor de la actualización automática en vivo (en foreground). Activa por defecto. */
+    val autoRefreshEnabled = MutableStateFlow(true)
+
+    fun setAutoRefresh(enabled: Boolean) { autoRefreshEnabled.value = enabled }
+
+    /** Señal discreta de fallo del refresco automático (silencioso): null si todo va bien. */
+    val liveError = MutableStateFlow<String?>(null)
+
+    // --- Búsqueda de activos (Finnhub /search) para el diálogo "Agregar" ---
+    val symbolQuery = MutableStateFlow("")
+    val symbolSearchState = MutableStateFlow<SymbolSearchState>(SymbolSearchState.Idle)
+
+    fun onSymbolQueryChange(text: String) { symbolQuery.value = text }
+    fun clearSymbolSearch() {
+        symbolQuery.value = ""
+        symbolSearchState.value = SymbolSearchState.Idle
+    }
+
+    /** Indica al diálogo si la búsqueda remota está disponible (hay API key configurada). */
+    val isSymbolSearchAvailable: Boolean get() = marketRepo.canRefresh
+
+    @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
+    private val symbolSearchPipeline = symbolQuery
+        .debounce(350) // ≥300 ms recomendado por Finnhub (respeta el rate limit)
+        .map { it.trim() }
+        .distinctUntilChanged()
+        .onEach { q ->
+            symbolSearchState.value = when {
+                !marketRepo.canRefresh -> SymbolSearchState.NeedsApiKey
+                q.length < 2 -> SymbolSearchState.Idle
+                else -> SymbolSearchState.Loading
+            }
+        }
+        .filter { marketRepo.canRefresh && it.length >= 2 }
+        .flatMapLatest { q -> // cancela búsquedas obsoletas al teclear
+            flow {
+                val results = marketRepo.searchSymbols(q)
+                emit(
+                    if (results.isEmpty()) SymbolSearchState.Empty
+                    else SymbolSearchState.Results(results)
+                )
+            }
+        }
+        .onEach { symbolSearchState.value = it }
+        .launchIn(viewModelScope)
+
+    /**
+     * Obtiene el precio actual de un símbolo para prellenar el diálogo. null si no hay fuente
+     * remota o no hay dato (c==0 / NaN ya filtrados por fetchPrice). No persiste nada.
+     */
+    suspend fun prefillPrice(symbol: String): Double? =
+        when (val r = marketRepo.fetchPrice(symbol)) {
+            is PriceResult.Success -> r.price
+            is PriceResult.Failure -> null
+        }
+
     // App state: Selected Month and Year for Dashboard & Budget
     val selectedMonth = MutableStateFlow(5) // Default to May 2026 as per specification
     val selectedYear = MutableStateFlow(2026)
@@ -66,11 +128,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     val allInvestments: StateFlow<List<InvestmentEntity>> = repository.allInvestments
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    init {
-        viewModelScope.launch {
-            repository.ensureSeedData()
-        }
-    }
+    // Sin auto-seeding: la app arranca completamente vacía. Los datos solo aparecen cuando el
+    // usuario los crea, o cuando invoca manualmente "Restaurar datos demo" (con reautenticación)
+    // desde Ajustes / Dashboard. Una base vacía NUNCA dispara siembra automática.
 
     // --- Computed flows for custom months ---
     val dashboardSummary: StateFlow<DashboardDetails> = combine(
@@ -230,25 +290,17 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         val sYear = flowsArray[4] as Int
         val isAvgMode = flowsArray[5] as Boolean
 
-        // Filter out expense categories
+        // Solo categorías de gasto REALES del usuario + las que ya tienen un presupuesto guardado.
+        // Sin categorías de referencia hardcodeadas: con la BD vacía, la lista queda vacía y la
+        // pantalla de Presupuesto muestra su empty state.
         val expenseCategories = categories.filter { it.type == "EXPENSE" }.map { it.name }.toSet()
-        val defaultReferenceCategories = listOf("Vivienda", "Servicios", "Alimentación", "Transporte", "Entretenimiento", "Salud", "Ahorro", "Otros")
-        val allExpenseCategoryNames = (expenseCategories + defaultReferenceCategories + budgets.map { it.categoryName }).toList().distinct()
+        val allExpenseCategoryNames = (expenseCategories + budgets.map { it.categoryName }).toList().distinct()
 
         allExpenseCategoryNames.map { category ->
-            // 1. Get budgeted amount for selected month and year
+            // 1. Get budgeted amount for selected month and year (0 si el usuario no lo ha fijado;
+            // nunca un monto inventado).
             val budgetObj = budgets.firstOrNull { it.categoryName == category && it.month == sMonth && it.year == sYear }
-            val budgetedAmount = budgetObj?.plannedAmount ?: when (category) {
-                "Vivienda" -> 300000.0
-                "Servicios" -> 120000.0
-                "Alimentación" -> 280000.0
-                "Transporte" -> 80000.0
-                "Entretenimiento" -> 50000.0
-                "Salud" -> 60000.0
-                "Ahorro" -> 150000.0
-                "Otros" -> 50000.0
-                else -> 0.0 // Default dynamic category gets 0 budgeted if not saved
-            }
+            val budgetedAmount = budgetObj?.plannedAmount ?: 0.0
 
             // 2. Get spent amount
             val spentAmount = if (isAvgMode) {
@@ -393,18 +445,30 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
      * actualización (modo manual) o falla, se conservan los últimos precios conocidos y se informa
      * al usuario. Nunca lanza excepción hacia la UI.
      */
-    fun refreshPrices() {
+    /** Actualización MANUAL (botón): muestra spinner y banner de resultado. */
+    fun refreshPrices() = refreshPricesInternal(auto = false)
+
+    /**
+     * Actualización AUTOMÁTICA en vivo (poller en foreground): silenciosa. No muestra spinner ni
+     * banner de éxito; solo refresca los precios y `lastPriceUpdate`. Si no hay fuente remota o no
+     * hay activos, no hace nada (sin ruido ni tráfico).
+     */
+    fun autoRefreshPrices() = refreshPricesInternal(auto = true)
+
+    private fun refreshPricesInternal(auto: Boolean) {
         if (!marketRepo.canRefresh) {
-            priceUpdateState.value = PriceUpdateState.Error(
-                "Actualización automática no disponible. Ingresa los precios manualmente."
-            )
+            if (!auto) {
+                priceUpdateState.value = PriceUpdateState.Error(
+                    "Actualización automática no disponible. Ingresa los precios manualmente."
+                )
+            }
             return
         }
         viewModelScope.launch {
-            priceUpdateState.value = PriceUpdateState.Loading
+            if (!auto) priceUpdateState.value = PriceUpdateState.Loading
             val stocks = repository.allInvestments.first()
             if (stocks.isEmpty()) {
-                priceUpdateState.value = PriceUpdateState.Error("No hay activos en el portafolio.")
+                if (!auto) priceUpdateState.value = PriceUpdateState.Error("No hay activos en el portafolio.")
                 return@launch
             }
             var updated = 0
@@ -423,13 +487,20 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     is PriceResult.Failure -> failed++
                 }
             }
-            priceUpdateState.value = if (updated > 0) {
-                val tail = if (failed > 0) " ($failed sin cambios)" else ""
-                PriceUpdateState.Success(updated, "Se actualizaron $updated precio(s)$tail.")
-            } else {
-                PriceUpdateState.Error(
-                    "No se pudieron actualizar los precios. Se conservan los últimos conocidos."
-                )
+            // Señal discreta para el camino automático (que no usa banners): si nada se actualizó
+            // se avisa de forma sutil; cualquier éxito limpia el aviso.
+            if (updated > 0) liveError.value = null
+            else if (auto) liveError.value = "Sin conexión a la API · reintentando"
+
+            if (!auto) {
+                priceUpdateState.value = if (updated > 0) {
+                    val tail = if (failed > 0) " ($failed sin cambios)" else ""
+                    PriceUpdateState.Success(updated, "Se actualizaron $updated precio(s)$tail.")
+                } else {
+                    PriceUpdateState.Error(
+                        "No se pudieron actualizar los precios. Se conservan los últimos conocidos."
+                    )
+                }
             }
         }
     }
@@ -583,6 +654,15 @@ sealed class PriceUpdateState {
     object Loading : PriceUpdateState()
     data class Success(val updatedCount: Int, val message: String) : PriceUpdateState()
     data class Error(val message: String) : PriceUpdateState()
+}
+
+/** Estado de la búsqueda de símbolos en el diálogo "Agregar activo". */
+sealed class SymbolSearchState {
+    object Idle : SymbolSearchState()
+    object NeedsApiKey : SymbolSearchState() // modo manual / sin key → mensaje en el diálogo
+    object Loading : SymbolSearchState()
+    object Empty : SymbolSearchState() // sin coincidencias o error de red (degrada suave)
+    data class Results(val matches: List<SymbolMatch>) : SymbolSearchState()
 }
 
 // --- Companion / Auxiliary Data Structures ---

@@ -1,5 +1,8 @@
 package com.example.ui.security
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,14 +17,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.Motion
+import com.example.ui.theme.rememberReducedMotion
 
 /**
  * Teclado numérico reutilizable para introducir el PIN. No contiene lógica de negocio:
@@ -93,12 +101,22 @@ private fun KeyButton(
     label: String,
     onClick: () -> Unit
 ) {
+    val reduced = rememberReducedMotion()
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && !reduced) 0.94f else 1f,
+        animationSpec = Motion.fast(reduced),
+        label = "keyScale",
+    )
     Surface(
         modifier = modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(CircleShape),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
         onClick = onClick,
-        shape = CircleShape
+        shape = CircleShape,
+        interactionSource = interaction
     ) {
         androidx.compose.foundation.layout.Box(
             modifier = Modifier
@@ -129,12 +147,23 @@ private fun IconKeyButton(
     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     val tint = if (highlight) MaterialTheme.colorScheme.onPrimary
     else MaterialTheme.colorScheme.onSurface
+    val reduced = rememberReducedMotion()
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled && !reduced) 0.94f else 1f,
+        animationSpec = Motion.fast(reduced),
+        label = "iconKeyScale",
+    )
     Surface(
-        modifier = modifier.clip(CircleShape),
+        modifier = modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(CircleShape),
         color = if (enabled) container else container.copy(alpha = 0.3f),
         onClick = onClick,
         enabled = enabled,
-        shape = CircleShape
+        shape = CircleShape,
+        interactionSource = interaction
     ) {
         androidx.compose.foundation.layout.Box(
             modifier = Modifier

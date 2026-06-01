@@ -1,10 +1,17 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -12,9 +19,15 @@ import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -27,17 +40,29 @@ import com.example.data.entity.InvestmentEntity
 import com.example.security.SecurityViewModel
 import com.example.ui.components.AmountVisibilityToggle
 import com.example.ui.components.EmptyState
+import com.example.ui.components.FinanceCard
 import com.example.ui.components.MainTopBar
+import com.example.ui.components.CountUpAmountText
 import com.example.ui.components.PrivacyAmountText
+import com.example.ui.components.pressScale
+import com.example.ui.theme.Motion
+import com.example.ui.theme.AccentBlue
+import com.example.ui.theme.AccentCyan
 import com.example.ui.theme.ExcelGreen
 import com.example.ui.theme.ExcelMediumBlue
 import com.example.ui.theme.ExcelRed
+import com.example.ui.theme.LocalFinanceColors
+import com.example.ui.theme.Success
+import com.example.ui.theme.Negative
 import com.example.ui.viewmodel.FinanceViewModel
 import com.example.ui.viewmodel.PriceUpdateState
 import com.example.util.FormatUtils
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+/** Intervalo del refresco de precios en vivo (foreground). Acorde al rate limit del tier gratis. */
+private const val AUTO_REFRESH_INTERVAL_MS = 60_000L
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,19 +76,44 @@ fun PortafolioScreen(
     val priceState by viewModel.priceUpdateState.collectAsState()
     val lastUpdate by viewModel.lastPriceUpdate.collectAsState()
     val hideAmounts by securityViewModel.hideAmounts.collectAsState()
+    val autoRefreshEnabled by viewModel.autoRefreshEnabled.collectAsState()
+    val canAutoRefresh = viewModel.isAutoRefreshAvailable
+    val liveError by viewModel.liveError.collectAsState()
+
+    // --- Precios en vivo (solo en foreground) ---
+    // Mientras esta pantalla está RESUMED (visible y app desbloqueada), refresca precios cada
+    // intervalo. repeatOnLifecycle pausa automáticamente al ir a background o bloquearse, y se
+    // cancela al salir de la pantalla. Sin fuente remota o con auto desactivado, no hace nada.
+    if (canAutoRefresh && autoRefreshEnabled) {
+        val lifecycleOwner = LocalLifecycleOwner.current
+        LaunchedEffect(lifecycleOwner) {
+            lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                while (true) {
+                    delay(AUTO_REFRESH_INTERVAL_MS)
+                    viewModel.autoRefreshPrices()
+                }
+            }
+        }
+    }
 
     var showAddDialog by remember { mutableStateOf(value = false) }
     var selectedStockToEdit by remember { mutableStateOf<InvestmentEntity?>(null) }
     var showDeleteConfirmDialog by remember { mutableStateOf<InvestmentEntity?>(null) }
 
+    val stocksListState = rememberLazyListState()
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         floatingActionButton = {
+            val fabInteraction = remember { MutableInteractionSource() }
             FloatingActionButton(
                 onClick = { showAddDialog = true },
                 containerColor = ExcelMediumBlue,
                 contentColor = Color.White,
-                modifier = Modifier.testTag("fab_add_stock"),
+                interactionSource = fabInteraction,
+                modifier = Modifier
+                    .testTag("fab_add_stock")
+                    .pressScale(target = 0.96f, interactionSource = fabInteraction),
             ) {
                 Icon(Icons.Default.Add, contentDescription = "Agregar Inversión")
             }
@@ -71,6 +121,7 @@ fun PortafolioScreen(
         topBar = {
             MainTopBar(
                 title = "Portafolio de Inversión",
+                elevated = stocksListState.canScrollBackward,
                 actions = {
                     AmountVisibilityToggle(
                         hidden = hideAmounts,
@@ -88,14 +139,27 @@ fun PortafolioScreen(
                 .padding(innerPadding)
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            // --- PORTFOLIO HERO SUMMARY CARD ---
-            Card(
+            // --- PORTFOLIO HERO SUMMARY CARD (degradado estático azul → cyan) ---
+            val heroShape = MaterialTheme.shapes.large
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(12.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = ExcelMediumBlue)
+                    .padding(12.dp)
+                    .clip(heroShape)
+                    .background(Brush.linearGradient(listOf(AccentBlue, AccentCyan)))
             ) {
+                // Brillo radial decorativo (estático, sutil) en la esquina superior.
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(Color.White.copy(alpha = 0.10f), Color.Transparent),
+                                center = Offset(x = Float.POSITIVE_INFINITY, y = 0f),
+                                radius = 600f,
+                            )
+                        )
+                )
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -105,8 +169,9 @@ fun PortafolioScreen(
                         style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.7f), fontWeight = FontWeight.Bold)
                     )
 
-                    PrivacyAmountText(
-                        amount = FormatUtils.formatUSD(metrics.totalCurrent),
+                    CountUpAmountText(
+                        value = metrics.totalCurrent,
+                        formatter = FormatUtils::formatUSD,
                         style = MaterialTheme.typography.headlineLarge.copy(color = Color.White, fontWeight = FontWeight.Bold, letterSpacing = (-1).sp),
                         color = Color.White,
                         maxLines = 1,
@@ -140,7 +205,7 @@ fun PortafolioScreen(
                             val gl = metrics.totalGainLoss
                             val pct = metrics.totalYieldPercent
                             val sign = if (gl >= 0) "+" else ""
-                            val labelColor = if (gl >= 0) Color(0xFFC8E6C9) else Color(0xFFFFCDD2)
+                            val labelColor = if (gl >= 0) Success else Negative
 
                             // Monto enmascarable; el porcentaje siempre visible (no revela monto exacto).
                             PrivacyAmountText(
@@ -170,7 +235,7 @@ fun PortafolioScreen(
                                     Text("Mejor activo", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.7f))
                                     Text(
                                         "${best.ticker}  ${FormatUtils.formatPercentage2Signed(best.yieldPercent)}",
-                                        style = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFFC8E6C9), fontWeight = FontWeight.Bold),
+                                        style = MaterialTheme.typography.bodyMedium.copy(color = Success, fontWeight = FontWeight.Bold),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -184,7 +249,7 @@ fun PortafolioScreen(
                                     Text("Peor activo", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.7f))
                                     Text(
                                         "${worst.ticker}  ${FormatUtils.formatPercentage2Signed(worst.yieldPercent)}",
-                                        style = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFFFFCDD2), fontWeight = FontWeight.Bold),
+                                        style = MaterialTheme.typography.bodyMedium.copy(color = Negative, fontWeight = FontWeight.Bold),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -196,15 +261,13 @@ fun PortafolioScreen(
             }
 
             // --- ACTUALIZACIÓN DE PRECIOS ---
-            Card(
+            FinanceCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                contentPadding = PaddingValues(12.dp)
             ) {
-                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -219,14 +282,14 @@ fun PortafolioScreen(
                                 text = lastUpdate?.let { "Última actualización: ${formatTimestamp(it)}" }
                                     ?: "Sin actualizaciones registradas",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Button(
                             onClick = { viewModel.refreshPrices() },
                             enabled = priceState !is PriceUpdateState.Loading,
                             colors = ButtonDefaults.buttonColors(containerColor = ExcelMediumBlue),
-                            shape = RoundedCornerShape(8.dp),
+                            shape = MaterialTheme.shapes.small,
                             modifier = Modifier.testTag("refresh_prices_button")
                         ) {
                             if (priceState is PriceUpdateState.Loading) {
@@ -243,11 +306,67 @@ fun PortafolioScreen(
                         }
                     }
 
+                    // Indicador de "en vivo" + interruptor (solo si hay fuente remota disponible).
+                    if (canAutoRefresh) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            val amber = LocalFinanceColors.current.warning
+                            val showRetrying = autoRefreshEnabled && liveError != null
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(
+                                        when {
+                                            !autoRefreshEnabled -> MaterialTheme.colorScheme.outline
+                                            showRetrying -> amber
+                                            else -> ExcelGreen
+                                        }
+                                    )
+                            )
+                            Text(
+                                text = when {
+                                    !autoRefreshEnabled -> "Actualización en vivo en pausa"
+                                    showRetrying -> liveError!!
+                                    else -> "En vivo · cada ${AUTO_REFRESH_INTERVAL_MS / 1000} s"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (showRetrying) amber else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Switch(
+                                checked = autoRefreshEnabled,
+                                onCheckedChange = { viewModel.setAutoRefresh(it) },
+                                modifier = Modifier.testTag("auto_refresh_switch")
+                            )
+                        }
+                    } else {
+                        // Modo manual explícito: sin API key no hay precios en vivo (no se siente roto).
+                        Text(
+                            text = "Modo manual: edita el precio de cada activo a mano, o configura una API de mercado (MARKET_API_KEY) para precios en vivo.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
                     // Mensaje del resultado de la actualización (éxito o error claro).
-                    when (val state = priceState) {
-                        is PriceUpdateState.Success -> StatusBanner(state.message, ExcelGreen)
-                        is PriceUpdateState.Error -> StatusBanner(state.message, ExcelRed)
-                        else -> {}
+                    // Aparece/desaparece con un fade + expand sutil.
+                    val statusBanner: Pair<String, Color>? = when (val state = priceState) {
+                        is PriceUpdateState.Success -> state.message to ExcelGreen
+                        is PriceUpdateState.Error -> state.message to ExcelRed
+                        else -> null
+                    }
+                    AnimatedVisibility(
+                        visible = statusBanner != null,
+                        enter = fadeIn(Motion.medium()) + expandVertically(Motion.medium()),
+                        exit = fadeOut(Motion.fast()) + shrinkVertically(Motion.fast()),
+                    ) {
+                        statusBanner?.let { (message, color) -> StatusBanner(message, color) }
                     }
                 }
             }
@@ -267,6 +386,7 @@ fun PortafolioScreen(
                 )
             } else {
                 LazyColumn(
+                    state = stocksListState,
                     modifier = Modifier
                         .weight(1f)
                         .padding(horizontal = 12.dp)
@@ -279,18 +399,17 @@ fun PortafolioScreen(
                         val valueColor = if (isPositive) ExcelGreen else ExcelRed
                         val sign = if (isPositive) "+" else ""
 
-                        Card(
+                        FinanceCard(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    selectedStockToEdit = rawStocks.firstOrNull { it.id == stock.id }
-                                }
+                                .animateItem()
                                 .testTag("stock_item_${stock.ticker}"),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                            contentPadding = PaddingValues(12.dp),
+                            onClick = {
+                                selectedStockToEdit = rawStocks.firstOrNull { it.id == stock.id }
+                            }
                         ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
+                            Column {
                                 // Fila 1: Ticker, nombre, peso en el portafolio y borrar.
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -365,7 +484,7 @@ fun PortafolioScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("Participación", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                        Text("Participación", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         Text(
                                             "Cant: ${stock.quantity}",
                                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
@@ -374,8 +493,8 @@ fun PortafolioScreen(
                                         )
                                         PrivacyAmountText(
                                             amount = "Comp: ${FormatUtils.formatUSD(stock.purchasePrice)}",
-                                            style = MaterialTheme.typography.bodySmall.copy(color = Color.Gray),
-                                            color = Color.Gray,
+                                            style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
 
@@ -383,15 +502,15 @@ fun PortafolioScreen(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        Text("Precio Act.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                        Text("Precio Act.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         PrivacyAmountText(
                                             amount = FormatUtils.formatUSD(stock.currentPrice),
                                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                                         )
                                         PrivacyAmountText(
                                             amount = "Val: ${FormatUtils.formatUSD(stock.currentValue)}",
-                                            style = MaterialTheme.typography.bodySmall.copy(color = Color.Gray),
-                                            color = Color.Gray,
+                                            style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
 
@@ -399,7 +518,7 @@ fun PortafolioScreen(
                                         horizontalAlignment = Alignment.End,
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        Text("Gan / Pérd", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                        Text("Gan / Pérd", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         PrivacyAmountText(
                                             amount = "$sign${FormatUtils.formatUSD(stock.gainLoss)}",
                                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
@@ -434,6 +553,7 @@ fun PortafolioScreen(
     // Modal dialogue to ADD Stock
     if (showAddDialog) {
         AddStockDialog(
+            viewModel = viewModel,
             onDismiss = { showAddDialog = false },
         ) { ticker, name, qty, buyPrice, currentPrice ->
             viewModel.addStock(ticker, name, qty, buyPrice, currentPrice)
@@ -459,7 +579,7 @@ fun PortafolioScreen(
                     Text(
                         "Actualiza los valores correspondientes para el activo '${stock.companyName}':",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     if (errorMsg.isNotEmpty()) {
@@ -572,7 +692,7 @@ private fun StatusBanner(message: String, color: Color) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(MaterialTheme.shapes.small)
             .background(color.copy(alpha = 0.1f))
             .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {

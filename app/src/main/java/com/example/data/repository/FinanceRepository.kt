@@ -6,7 +6,6 @@ import com.example.data.entity.CategoryEntity
 import com.example.data.entity.InvestmentEntity
 import com.example.data.entity.TransactionEntity
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 
 class FinanceRepository(private val dao: FinanceDao) {
 
@@ -18,14 +17,11 @@ class FinanceRepository(private val dao: FinanceDao) {
     fun getBudgetsForMonthAndYear(month: Int, year: Int): Flow<List<BudgetEntity>> =
         dao.getBudgetsForMonthAndYear(month, year)
 
-    // Ensure seed data is inserted exactly once
-    suspend fun ensureSeedData() {
-        val existingCategories = allCategories.first()
-        if (existingCategories.isEmpty()) {
-            restoreSeedData()
-        }
-    }
-
+    /**
+     * Carga el conjunto de datos de ejemplo. ACCIÓN MANUAL EXCLUSIVAMENTE: se invoca solo desde
+     * "Restaurar datos demo" en Ajustes/Dashboard (con reautenticación). NO existe ninguna ruta
+     * automática que llame a esta función; una base vacía nunca se re-siembra sola.
+     */
     suspend fun restoreSeedData() {
         // Clear everything first
         dao.clearAllTransactions()
@@ -86,7 +82,7 @@ class FinanceRepository(private val dao: FinanceDao) {
             InvestmentEntity(ticker = "NVDA", companyName = "NVIDIA", quantity = 1.37081707, purchasePrice = 216.24, currentPrice = 211.14),
             InvestmentEntity(ticker = "INTC", companyName = "Intel", quantity = 1.002848909, purchasePrice = 122.15, currentPrice = 114.68),
             InvestmentEntity(ticker = "MA", companyName = "Mastercard", quantity = 0.409148217, purchasePrice = 493.34, currentPrice = 494.04),
-            InvestmentEntity(ticker = "PENDIENTE", companyName = "Activo pendiente", quantity = 1.127453887, purchasePrice = 269.78, currentPrice = 270.64)
+            InvestmentEntity(ticker = "AMZN", companyName = "Amazon.com", quantity = 1.127453887, purchasePrice = 269.78, currentPrice = 270.64)
         )
         dao.insertInvestments(initialStocks)
 

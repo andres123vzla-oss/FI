@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   Configuración de seguridad de red. La app es offline-first; la ÚNICA conexión saliente posible
+   es la API de precios de mercado. Se prohíbe TODO tráfico en claro (HTTP): cualquier conexión
+   debe ser HTTPS, evitando interceptación/filtración de datos. Sin API key, no hay tráfico.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">finnhub.io</domain>
+    </domain-config>
+</network-security-config>

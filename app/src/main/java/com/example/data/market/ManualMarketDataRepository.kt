@@ -17,4 +17,7 @@ object ManualMarketDataRepository : MarketDataRepository {
             ticker,
             "Modo manual: edita el precio actual a mano o configura una API de mercado.",
         )
+
+    /** Sin fuente remota: la búsqueda no devuelve resultados (la entrada manual sigue disponible). */
+    override suspend fun searchSymbols(query: String): List<SymbolMatch> = emptyList()
 }
