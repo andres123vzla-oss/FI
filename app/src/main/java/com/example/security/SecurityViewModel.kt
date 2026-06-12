@@ -117,42 +117,47 @@ class SecurityViewModel(application: Application) : AndroidViewModel(application
      * Verifica el PIN al desbloquear, controlando intentos fallidos y lockout temporal.
      * @param onResult (éxito, mensajeError)
      */
-    fun verifyPinForUnlock(pin: String, onResult: (success: Boolean, error: String?) -> Unit) {
+    fun verifyPinForUnlock(pin: CharArray, onResult: (success: Boolean, error: String?) -> Unit) {
         viewModelScope.launch {
-            // Reloj de pared: el lockout se persiste y debe sobrevivir a reinicios del proceso
-            // sin verse afectado por el reinicio de elapsedRealtime tras reiniciar el equipo.
-            val now = System.currentTimeMillis()
-            val lockoutUntil = prefs.lockoutUntilElapsed.first()
-            if (lockoutUntil > now) {
-                val secs = ((lockoutUntil - now) / 1000) + 1
-                onResult(false, "Demasiados intentos. Espera $secs s.")
-                return@launch
-            }
-            if (verifyAgainstStored(pin)) {
-                prefs.setFailedAttempts(0)
-                prefs.setLockoutUntil(0L)
-                prefs.setLockoutCount(0)
-                AppLockManager.unlock()
-                onResult(true, null)
-            } else {
-                val attempts = (failedAttemptsSnapshot()) + 1
-                if (attempts >= MAX_ATTEMPTS) {
-                    // Backoff exponencial (SEC-06): el lockout crece con cada ronda fallida
-                    // encadenada. lockout_count NO se reinicia aquí, solo tras un desbloqueo
-                    // exitoso (PIN o biometría), de modo que reintentar no devuelve 5 intentos
-                    // cada 30 s indefinidamente.
-                    val count = prefs.lockoutCount.first() + 1
-                    val lockoutMs = (BASE_LOCKOUT_MS shl (count - 1).coerceIn(0, MAX_BACKOFF_SHIFT))
-                        .coerceAtMost(MAX_LOCKOUT_MS)
-                    prefs.setLockoutCount(count)
-                    prefs.setFailedAttempts(0)
-                    prefs.setLockoutUntil(now + lockoutMs)
-                    onResult(false, "Demasiados intentos. Espera ${lockoutMs / 1000} s.")
-                } else {
-                    prefs.setFailedAttempts(attempts)
-                    val remaining = MAX_ATTEMPTS - attempts
-                    onResult(false, "PIN incorrecto. Te quedan $remaining intento(s).")
+            try {
+                // Reloj de pared: el lockout se persiste y debe sobrevivir a reinicios del proceso
+                // sin verse afectado por el reinicio de elapsedRealtime tras reiniciar el equipo.
+                val now = System.currentTimeMillis()
+                val lockoutUntil = prefs.lockoutUntilElapsed.first()
+                if (lockoutUntil > now) {
+                    val secs = ((lockoutUntil - now) / 1000) + 1
+                    onResult(false, "Demasiados intentos. Espera $secs s.")
+                    return@launch
                 }
+                if (verifyAgainstStored(pin)) {
+                    prefs.setFailedAttempts(0)
+                    prefs.setLockoutUntil(0L)
+                    prefs.setLockoutCount(0)
+                    AppLockManager.unlock()
+                    onResult(true, null)
+                } else {
+                    val attempts = (failedAttemptsSnapshot()) + 1
+                    if (attempts >= MAX_ATTEMPTS) {
+                        // Backoff exponencial (SEC-06): el lockout crece con cada ronda fallida
+                        // encadenada. lockout_count NO se reinicia aquí, solo tras un desbloqueo
+                        // exitoso (PIN o biometría), de modo que reintentar no devuelve 5 intentos
+                        // cada 30 s indefinidamente.
+                        val count = prefs.lockoutCount.first() + 1
+                        val lockoutMs = (BASE_LOCKOUT_MS shl (count - 1).coerceIn(0, MAX_BACKOFF_SHIFT))
+                            .coerceAtMost(MAX_LOCKOUT_MS)
+                        prefs.setLockoutCount(count)
+                        prefs.setFailedAttempts(0)
+                        prefs.setLockoutUntil(now + lockoutMs)
+                        onResult(false, "Demasiados intentos. Espera ${lockoutMs / 1000} s.")
+                    } else {
+                        prefs.setFailedAttempts(attempts)
+                        val remaining = MAX_ATTEMPTS - attempts
+                        onResult(false, "PIN incorrecto. Te quedan $remaining intento(s).")
+                    }
+                }
+            } finally {
+                // SEC-08: borrar el PIN de memoria en cuanto se usó (éxito o error).
+                pin.fill(' ')
             }
         }
     }
@@ -193,7 +198,7 @@ class SecurityViewModel(application: Application) : AndroidViewModel(application
 
     // --- Helpers ---
 
-    private suspend fun verifyAgainstStored(pin: String): Boolean {
+    private suspend fun verifyAgainstStored(pin: CharArray): Boolean {
         val pair = prefs.getHashAndSalt() ?: return false
         val (hash, salt) = pair
         val ok = PinHasher.verify(pin, salt, hash)
@@ -208,6 +213,16 @@ class SecurityViewModel(application: Application) : AndroidViewModel(application
             }
         }
         return ok
+    }
+
+    /** Sobrecarga [String] (setup/cambio/reautenticación): copia efímera a [CharArray] y se borra. */
+    private suspend fun verifyAgainstStored(pin: String): Boolean {
+        val chars = pin.toCharArray()
+        return try {
+            verifyAgainstStored(chars)
+        } finally {
+            chars.fill(' ')
+        }
     }
 
     private suspend fun failedAttemptsSnapshot(): Int = prefs.failedAttempts.first()

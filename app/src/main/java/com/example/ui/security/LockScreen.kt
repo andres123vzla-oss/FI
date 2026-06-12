@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -61,7 +62,9 @@ fun LockScreen(
     onBiometricRequested: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var pin by remember { mutableStateOf("") }
+    // SEC-08: el PIN se acumula en un buffer de caracteres borrable (no un String inmutable que
+    // quedaría retenido en memoria). Se entrega como CharArray a la verificación y se limpia.
+    val pin = remember { mutableStateListOf<Char>() }
     var error by remember { mutableStateOf<String?>(null) }
 
     // Movimiento: scale-in de los dots y shake en PIN incorrecto (respeta "reducir movimiento").
@@ -144,7 +147,7 @@ fun LockScreen(
                         fontSize = 18.sp
                     )
                 } else {
-                    val visibleDots = pin.length.coerceAtMost(SecurityViewModel.MAX_PIN_LENGTH)
+                    val visibleDots = pin.size.coerceAtMost(SecurityViewModel.MAX_PIN_LENGTH)
                     repeat(visibleDots) {
                         PinDot(reduced = reducedMotion)
                     }
@@ -171,25 +174,26 @@ fun LockScreen(
             PinPad(
                 modifier = Modifier.widthIn(max = 320.dp),
                 onDigit = { d ->
-                    if (pin.length < SecurityViewModel.MAX_PIN_LENGTH) {
-                        pin += d
+                    if (pin.size < SecurityViewModel.MAX_PIN_LENGTH) {
+                        pin.add(d)
                         error = null
                     }
                 },
                 onBackspace = {
-                    if (pin.isNotEmpty()) pin = pin.dropLast(1)
+                    if (pin.isNotEmpty()) pin.removeAt(pin.size - 1)
                 },
                 onConfirm = {
-                    val entered = pin
+                    // Copia efímera del buffer; el ViewModel la borra tras verificar (SEC-08).
+                    val entered = CharArray(pin.size) { pin[it] }
+                    pin.clear()
                     securityViewModel.verifyPinForUnlock(entered) { success, err ->
                         if (!success) {
                             error = err
-                            pin = ""
                             errorNonce++
                         }
                     }
                 },
-                confirmEnabled = pin.length >= SecurityViewModel.MIN_PIN_LENGTH
+                confirmEnabled = pin.size >= SecurityViewModel.MIN_PIN_LENGTH
             )
 
             if (showBiometric) {
