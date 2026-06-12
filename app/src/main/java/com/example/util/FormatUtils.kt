@@ -1,5 +1,6 @@
 package com.example.util
 
+import java.math.RoundingMode
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.util.Locale
@@ -13,12 +14,20 @@ object FormatUtils {
     private fun sanitize(value: Double): Double =
         if (value.isNaN() || value.isInfinite()) 0.0 else value
 
+    /**
+     * CALC-06: crea un [DecimalFormat] con redondeo HALF_UP, la convención financiera habitual
+     * (el default de DecimalFormat es HALF_EVEN / banker's rounding). Centralizar aquí garantiza
+     * que TODOS los formatters (moneda, porcentaje y compactos) redondeen igual.
+     */
+    private fun df(pattern: String, symbols: DecimalFormatSymbols): DecimalFormat =
+        DecimalFormat(pattern, symbols).apply { roundingMode = RoundingMode.HALF_UP }
+
     fun formatCLP(amount: Double): String {
         val symbols = DecimalFormatSymbols(Locale.forLanguageTag("es-CL")).apply {
             groupingSeparator = '.'
             decimalSeparator = ','
         }
-        val formatter = DecimalFormat("#,##0", symbols)
+        val formatter = df("#,##0", symbols)
         val formatted = formatter.format(sanitize(amount))
         return "CLP $formatted"
     }
@@ -28,7 +37,7 @@ object FormatUtils {
             groupingSeparator = ','
             decimalSeparator = '.'
         }
-        val formatter = DecimalFormat("#,##0.00", symbols)
+        val formatter = df("#,##0.00", symbols)
         val formatted = formatter.format(sanitize(amount))
         return "USD $formatted"
     }
@@ -38,12 +47,12 @@ object FormatUtils {
     private val percentSymbols = DecimalFormatSymbols(Locale.US)
 
     fun formatPercentage(value: Double): String {
-        val formatter = DecimalFormat("0.0%", percentSymbols)
+        val formatter = df("0.0%", percentSymbols)
         return formatter.format(sanitize(value))
     }
 
     fun formatPercentage2Signed(value: Double): String {
-        val formatter = DecimalFormat("+0.00%;-0.00%", percentSymbols)
+        val formatter = df("+0.00%;-0.00%", percentSymbols)
         return formatter.format(sanitize(value))
     }
 
@@ -61,8 +70,8 @@ object FormatUtils {
         val abs = kotlin.math.abs(v)
         val sign = if (v < 0) "-" else ""
         return when {
-            abs >= 1_000_000.0 -> "CLP $sign${DecimalFormat("0.##", clpCompactSymbols).format(abs / 1_000_000.0)}M"
-            abs >= 10_000.0 -> "CLP $sign${DecimalFormat("0.#", clpCompactSymbols).format(abs / 1_000.0)}K"
+            abs >= 1_000_000.0 -> "CLP $sign${df("0.##", clpCompactSymbols).format(abs / 1_000_000.0)}M"
+            abs >= 10_000.0 -> "CLP $sign${df("0.#", clpCompactSymbols).format(abs / 1_000.0)}K"
             else -> formatCLP(v)
         }
     }
@@ -76,8 +85,8 @@ object FormatUtils {
         val abs = kotlin.math.abs(v)
         val sign = if (v < 0) "-" else ""
         return when {
-            abs >= 1_000_000.0 -> "USD $sign${DecimalFormat("0.00", usdCompactSymbols).format(abs / 1_000_000.0)}M"
-            abs >= 10_000.0 -> "USD $sign${DecimalFormat("0.00", usdCompactSymbols).format(abs / 1_000.0)}K"
+            abs >= 1_000_000.0 -> "USD $sign${df("0.00", usdCompactSymbols).format(abs / 1_000_000.0)}M"
+            abs >= 10_000.0 -> "USD $sign${df("0.00", usdCompactSymbols).format(abs / 1_000.0)}K"
             else -> formatUSD(v)
         }
     }

@@ -1,6 +1,7 @@
 package com.example.data.entity
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 @Entity(tableName = "transactions")
@@ -34,7 +35,13 @@ data class BudgetEntity(
     val plannedAmount: Double
 )
 
-@Entity(tableName = "investments")
+// A3: índice único en ticker como red de seguridad contra duplicados. La fusión/dedupe real
+// la realiza FinanceRepository.addOrMergeInvestment (consulta + update ponderado), por lo que en
+// el DAO se evita OnConflictStrategy.REPLACE en investments para no destruir posiciones existentes.
+@Entity(
+    tableName = "investments",
+    indices = [Index(value = ["ticker"], unique = true)],
+)
 data class InvestmentEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val ticker: String,

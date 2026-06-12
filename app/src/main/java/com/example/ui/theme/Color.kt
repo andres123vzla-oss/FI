@@ -29,6 +29,33 @@ val Warning    = Color(0xFFF6C453) // Cerca del límite
 val OnAccent   = Color(0xFF07101F) // Texto/iconos sobre el acento (alto contraste)
 
 // ============================================================================
+// Sistema de color "claro" — Mi Panel Financiero (UX-01)
+// ----------------------------------------------------------------------------
+// Paleta clara real para cuando el sistema está en modo claro. Las superficies
+// pasan a tonos casi-blancos y el texto a tonos oscuros; los acentos/semánticos
+// se oscurecen lo necesario para mantener contraste WCAG AA (>=4.5:1) sobre
+// superficies claras (un cyan/verde/rojo demasiado luminosos fallarían).
+// ============================================================================
+
+// --- Superficies y texto (claro) ---
+val LightBg              = Color(0xFFF6F7F9) // Fondo de pantalla claro
+val LightSurfaceContainer= Color(0xFFFFFFFF) // Tarjetas
+val LightSurfaceHigh     = Color(0xFFEDEFF3) // Anidado / inputs
+val LightSurfaceHighest  = Color(0xFFE2E6EC) // Hover / chips / track
+val LightOutlineVariant  = Color(0xFFD8DCE3) // Bordes 1px (hairline)
+val LightOutline         = Color(0xFF6C7283) // Terciario / labels
+val LightOnSurface       = Color(0xFF14161B) // Texto principal
+val LightOnSurfaceVariant= Color(0xFF565E6D) // Texto secundario
+
+// --- Acento y semánticos (claro, oscurecidos para contraste sobre blanco) ---
+val LightAccentBlue = Color(0xFF1F6FEB) // Acción primaria sobre claro
+val LightAccentCyan = Color(0xFF0E7F8C) // Acento secundario sobre claro
+val LightSuccess    = Color(0xFF0E8A5F) // Ingresos / ganancia sobre claro
+val LightNegative   = Color(0xFFC4344B) // Gastos / pérdida / error sobre claro
+val LightWarning    = Color(0xFF9A6B00) // Cerca del límite sobre claro
+val LightOnAccent   = Color(0xFFFFFFFF) // Texto/iconos sobre el acento claro
+
+// ============================================================================
 // Compatibilidad: los nombres "Excel*" existentes se conservan pero ahora apuntan
 // al nuevo sistema premium. Así toda la UI que ya los usa adopta el rediseño sin
 // reescribir cada pantalla y sin perder funcionalidad.
@@ -38,10 +65,11 @@ val ExcelGreen = Success         // ingresos / ganancia
 val ExcelRed = Negative          // gastos / pérdida / error
 val ExcelMediumBlue = AccentBlue // gráficos / highlights / portafolio
 
-// Fondos/superficies en modo claro y oscuro (se mantienen los nombres; el rediseño
-// es dark premium, por lo que ambos esquemas usan la paleta oscura).
-val LightBackground = Background
-val LightSurface = SurfaceContainer
+// Fondos/superficies con nombres heredados. Ahora que existe un tema claro real
+// (UX-01), los alias Light* apuntan a las superficies claras y los Dark* a las
+// oscuras, para que cualquier referencia accidental use el color correcto por tema.
+val LightBackground = LightBg
+val LightSurface = LightSurfaceContainer
 val DarkBackground = Background
 val DarkSurface = SurfaceContainer
 

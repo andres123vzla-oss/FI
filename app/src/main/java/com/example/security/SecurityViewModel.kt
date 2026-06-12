@@ -131,14 +131,23 @@ class SecurityViewModel(application: Application) : AndroidViewModel(application
             if (verifyAgainstStored(pin)) {
                 prefs.setFailedAttempts(0)
                 prefs.setLockoutUntil(0L)
+                prefs.setLockoutCount(0)
                 AppLockManager.unlock()
                 onResult(true, null)
             } else {
                 val attempts = (failedAttemptsSnapshot()) + 1
                 if (attempts >= MAX_ATTEMPTS) {
+                    // Backoff exponencial (SEC-06): el lockout crece con cada ronda fallida
+                    // encadenada. lockout_count NO se reinicia aquí, solo tras un desbloqueo
+                    // exitoso (PIN o biometría), de modo que reintentar no devuelve 5 intentos
+                    // cada 30 s indefinidamente.
+                    val count = prefs.lockoutCount.first() + 1
+                    val lockoutMs = (BASE_LOCKOUT_MS shl (count - 1).coerceIn(0, MAX_BACKOFF_SHIFT))
+                        .coerceAtMost(MAX_LOCKOUT_MS)
+                    prefs.setLockoutCount(count)
                     prefs.setFailedAttempts(0)
-                    prefs.setLockoutUntil(now + LOCKOUT_MS)
-                    onResult(false, "Demasiados intentos. Espera ${LOCKOUT_MS / 1000} s.")
+                    prefs.setLockoutUntil(now + lockoutMs)
+                    onResult(false, "Demasiados intentos. Espera ${lockoutMs / 1000} s.")
                 } else {
                     prefs.setFailedAttempts(attempts)
                     val remaining = MAX_ATTEMPTS - attempts
@@ -177,6 +186,7 @@ class SecurityViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             prefs.setFailedAttempts(0)
             prefs.setLockoutUntil(0L)
+            prefs.setLockoutCount(0) // SEC-06: el desbloqueo legítimo reinicia el backoff.
             AppLockManager.unlock()
         }
     }
@@ -186,7 +196,18 @@ class SecurityViewModel(application: Application) : AndroidViewModel(application
     private suspend fun verifyAgainstStored(pin: String): Boolean {
         val pair = prefs.getHashAndSalt() ?: return false
         val (hash, salt) = pair
-        return PinHasher.verify(pin, salt, hash)
+        val ok = PinHasher.verify(pin, salt, hash)
+        if (ok && PinHasher.needsRehash(hash)) {
+            // Re-hash transparente (SEC-07): tras un login válido con un hash legacy (p.ej.
+            // PBKDF2 HMAC-SHA1) se reescribe con el algoritmo preferido del dispositivo.
+            // No invalida el acceso: ya validamos el PIN antes de regenerar.
+            runCatching {
+                val newSalt = PinHasher.generateSalt()
+                val newHash = PinHasher.hash(pin, newSalt)
+                prefs.updatePinHash(newHash, newSalt)
+            }
+        }
+        return ok
     }
 
     private suspend fun failedAttemptsSnapshot(): Int = prefs.failedAttempts.first()
@@ -202,7 +223,12 @@ class SecurityViewModel(application: Application) : AndroidViewModel(application
         const val MIN_PIN_LENGTH = 4
         const val MAX_PIN_LENGTH = 8
         const val MAX_ATTEMPTS = 5
-        const val LOCKOUT_MS = 30_000L
+
+        // Backoff exponencial del lockout (SEC-06): base 30 s, duplicándose por cada lockout
+        // encadenado hasta un tope de 15 min. count=1 -> 30s, 2 -> 1min, 3 -> 2min, ... (capado).
+        const val BASE_LOCKOUT_MS = 30_000L
+        const val MAX_LOCKOUT_MS = 15 * 60_000L
+        const val MAX_BACKOFF_SHIFT = 6 // 30s << 6 = 32 min, ya capado por MAX_LOCKOUT_MS
     }
 }
 

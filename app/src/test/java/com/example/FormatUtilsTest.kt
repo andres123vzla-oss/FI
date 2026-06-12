@@ -43,6 +43,16 @@ class FormatUtilsTest {
         assertEquals("0.0%", FormatUtils.formatPercentage(0.0))
     }
 
+    // CALC-06: fija el redondeo HALF_UP (convención financiera) en lugar del HALF_EVEN por
+    // defecto de DecimalFormat. En el límite .5 HALF_UP redondea hacia arriba; HALF_EVEN daría
+    // CLP 2 (al par) y USD 2.12.
+    @Test
+    fun `redondeo en el limite es HALF_UP`() {
+        assertEquals("CLP 3", FormatUtils.formatCLP(2.5))   // HALF_EVEN daría "CLP 2"
+        assertEquals("CLP 4", FormatUtils.formatCLP(3.5))   // ambos coinciden, refuerza dirección
+        assertEquals("USD 2.13", FormatUtils.formatUSD(2.125)) // HALF_EVEN daría "USD 2.12"
+    }
+
     @Test
     fun `CLP compacto usa sufijos M y K sin partir el numero`() {
         assertEquals("CLP 1,09M", FormatUtils.formatCLPCompact(1_090_094.0))

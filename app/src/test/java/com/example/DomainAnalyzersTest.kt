@@ -60,6 +60,31 @@ class DomainAnalyzersTest {
         assertEquals(-0.5, CashFlowAnalyzer.variation(50.0, 100.0)!!, 0.0001)
     }
 
+    // CALC-09: variación con base NEGATIVA. La fórmula divide por abs(previous), por lo que el
+    // signo del cambio se preserva aunque el mes anterior fuera negativo.
+    @Test
+    fun `variacion con base negativa usa el valor absoluto de la base`() {
+        // (-50 - (-100)) / |−100| = 50 / 100 = 0.5 (mejora respecto a un mes muy negativo)
+        assertEquals(0.5, CashFlowAnalyzer.variation(-50.0, -100.0)!!, 0.0001)
+        // (-100 - 40) / |40| = -140 / 40 = -3.5
+        assertEquals(-3.5, CashFlowAnalyzer.variation(-100.0, 40.0)!!, 0.0001)
+    }
+
+    // CALC-09: gasto > ingreso ⇒ tasa de ahorro negativa (sin recorte a 0).
+    @Test
+    fun `tasa de ahorro negativa cuando se gasta mas que el ingreso`() {
+        // (100 - 150) / 100 = -0.5
+        assertEquals(-0.5, CashFlowAnalyzer.savingsRate(100.0, 150.0), 0.0001)
+    }
+
+    // CALC-09: proyección de un mes HISTÓRICO ya cerrado. Si daysElapsed coincide con el total de
+    // días del mes, la proyección equivale al gasto real (no extrapola de más).
+    @Test
+    fun `proyeccion de mes historico cerrado no extrapola`() {
+        // 300.000 en 30 de 30 días -> 10.000/día * 30 = 300.000 (igual al gasto real)
+        assertEquals(300_000.0, CashFlowAnalyzer.projectedMonthEndSpending(300_000.0, 30, 30), 0.0001)
+    }
+
     // --- BudgetAnalyzer ---
 
     @Test
@@ -155,6 +180,34 @@ class DomainAnalyzersTest {
         assertNull(m.worst)
     }
 
+    // CALC-09: activo con currentPrice=0 (perdió todo su valor) pero costo>0 tiene rendimiento
+    // -100% y DEBE ser el peor del ranking; el ranking filtra por invested>0, no por currentPrice.
+    @Test
+    fun `activo con precio actual cero y costo positivo es el peor`() {
+        val stocks = listOf(
+            InvestmentEntity(id = 1, ticker = "OKK", companyName = "OK", quantity = 10.0, purchasePrice = 100.0, currentPrice = 110.0),
+            InvestmentEntity(id = 2, ticker = "ZER", companyName = "Cero", quantity = 5.0, purchasePrice = 200.0, currentPrice = 0.0),
+        )
+        val m = InvestmentCalculator.analyze(stocks)
+        assertEquals("OKK", m.best?.ticker)   // +10%
+        assertEquals("ZER", m.worst?.ticker)  // -100%
+    }
+
+    // CALC-09: activo con purchasePrice=0 (invested=0) queda EXCLUIDO de best/worst (ranking filtra
+    // it.invested > 0.0), aunque sí aparezca en la lista de stocks.
+    @Test
+    fun `activo con costo cero queda fuera del ranking mejor peor`() {
+        val stocks = listOf(
+            InvestmentEntity(id = 1, ticker = "REG", companyName = "Regalo", quantity = 4.0, purchasePrice = 0.0, currentPrice = 50.0),
+            InvestmentEntity(id = 2, ticker = "PAY", companyName = "Pagado", quantity = 2.0, purchasePrice = 100.0, currentPrice = 90.0),
+        )
+        val m = InvestmentCalculator.analyze(stocks)
+        // Solo PAY tiene invested>0: es a la vez best y worst; REG nunca debe aparecer.
+        assertEquals("PAY", m.best?.ticker)
+        assertEquals("PAY", m.worst?.ticker)
+        assertTrue(m.stocks.any { it.ticker == "REG" }) // sí está en la lista total
+    }
+
     // --- FinancialHealthAnalyzer ---
 
     @Test
@@ -163,5 +216,12 @@ class DomainAnalyzersTest {
         assertEquals(FinancialHealth.BUENO, FinancialHealthAnalyzer.evaluate(0.12, 100.0))
         assertEquals(FinancialHealth.AJUSTADO, FinancialHealthAnalyzer.evaluate(0.02, 100.0))
         assertEquals(FinancialHealth.CRITICO, FinancialHealthAnalyzer.evaluate(0.30, -100.0))
+    }
+
+    // CALC-09: balance negativo manda sobre la tasa de ahorro. Aun con tasa de ahorro negativa
+    // (gasto > ingreso) y balance negativo, el estado es CRÍTICO.
+    @Test
+    fun `salud financiera critica con ahorro y balance negativos`() {
+        assertEquals(FinancialHealth.CRITICO, FinancialHealthAnalyzer.evaluate(-0.5, -50.0))
     }
 }

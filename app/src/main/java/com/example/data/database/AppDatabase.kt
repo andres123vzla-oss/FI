@@ -19,7 +19,12 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         BudgetEntity::class,
         InvestmentEntity::class,
     ],
-    version = 1,
+    // C3/A3: version subida a 2 al añadir el índice único en investments.ticker.
+    // Mientras no haya datos de producción que preservar entre versiones, se mantiene
+    // fallbackToDestructiveMigration (los datos se re-siembran). POLÍTICA (A1/SEC-09): todo
+    // incremento futuro de version DEBE traer su Migration explícita test-eada antes de retirar
+    // el fallback, para no perder silenciosamente la base financiera del usuario.
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -52,6 +57,12 @@ abstract class AppDatabase : RoomDatabase() {
                         DB_NAME
                     )
                         .openHelperFactory(factory)
+                        // SEC-09/A1: este fallback puede borrar TODA la base financiera ante un
+                        // cambio de esquema sin Migration o si el Keystore se invalida (la passphrase
+                        // se regenera y la BD anterior no se puede abrir). Se conserva por ahora
+                        // (version baja, sin migraciones manuales). Antes de subir más versiones debe
+                        // sustituirse por addMigrations(...) y/o un respaldo cifrado opcional protegido
+                        // por PIN; el borrado nunca debe ser silencioso en release.
                         .fallbackToDestructiveMigration(dropAllTables = true)
                         .build()
                     INSTANCE = instance

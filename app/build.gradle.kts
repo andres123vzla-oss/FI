@@ -19,10 +19,14 @@ android {
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-    // Campos de BuildConfig con fallback VACÍO seguro. No se hardcodean claves reales: si no hay
-    // valor, quedan como "" y la app funciona en modo manual/local. La fuente de estos campos es
-    // este bloque (no el plugin de secrets, cuyo `.env.example` solo tiene comentarios), evitando
-    // así campos duplicados y errores de parseo en el BuildConfig generado.
+    // SEC-10: ÚNICA fuente de campos BuildConfig. Estos campos se declaran SOLO aquí; el plugin
+    // de secrets (bloque `secrets { }` más abajo) se neutraliza apuntándolo a un fichero de
+    // propiedades inexistente para que NO emita campos al BuildConfig. Así se evita el riesgo de
+    // campo duplicado (p. ej. el antiguo GEMINI_API_KEY estaba a la vez aquí y en `app/.env`,
+    // lo que rompía la compilación del BuildConfig generado).
+    //
+    // Fallback VACÍO seguro: no se hardcodean claves reales; si no hay valor quedan como "" y la
+    // app funciona en modo manual/local.
     //
     // MARKET_API_KEY: se lee de la variable de entorno o de una propiedad de Gradle
     // (-PMARKET_API_KEY=...); nunca del código fuente. Vacía ⇒ precios manuales.
@@ -30,8 +34,7 @@ android {
       ?: (project.findProperty("MARKET_API_KEY") as String?)
       ?: ""
     buildConfigField("String", "MARKET_API_KEY", "\"$marketApiKey\"")
-    // GEMINI_API_KEY: no lo usa el código de la app; se expone vacío por compatibilidad.
-    buildConfigField("String", "GEMINI_API_KEY", "\"\"")
+    // A9: se elimina GEMINI_API_KEY (campo muerto: ningún código de la app lo referencia).
   }
 
   signingConfigs {
@@ -70,24 +73,19 @@ android {
   testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 
-// Configure the Secrets Gradle Plugin to use .env and .env.example files
-// to match the convention used in Web projects.
+// SEC-10: el plugin de secrets se neutraliza a propósito. Los campos de BuildConfig se declaran
+// como ÚNICA fuente en defaultConfig (arriba). Apuntar el plugin a un fichero de propiedades
+// inexistente evita que emita campos (p. ej. el GEMINI_API_KEY de `app/.env`, que ya no se usa),
+// previniendo BuildConfig con campos duplicados y errores de compilación.
 secrets {
-  propertiesFileName = ".env"
-  defaultPropertiesFileName = ".env.example"
+  propertiesFileName = "secrets.properties.unused"
+  defaultPropertiesFileName = "secrets.defaults.unused"
 }
 
-// Some unused dependencies are commented out below instead of being removed.
-// This makes it easy to add them back in the future if needed.
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
-  // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.biometric)
-  // implementation(libs.androidx.camera.camera2)
-  // implementation(libs.androidx.camera.core)
-  // implementation(libs.androidx.camera.lifecycle)
-  // implementation(libs.androidx.camera.view)
   implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.compose.material.icons.extended)
   implementation(libs.androidx.compose.material3)
@@ -104,10 +102,8 @@ dependencies {
   implementation(libs.androidx.room.runtime)
   // Cifrado en reposo de la base de datos financiera (SQLCipher sobre el SupportSQLite de Room).
   implementation(libs.sqlcipher.android)
-  // implementation(libs.coil.compose)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
-  // implementation(libs.play.services.location)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)

@@ -2,7 +2,7 @@ package com.example.security
 
 import android.content.Context
 import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
+import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
@@ -12,13 +12,24 @@ import androidx.fragment.app.FragmentActivity
  *
  * La biometría es solo un acceso de conveniencia: siempre hay fallback al PIN mediante el
  * botón negativo del prompt.
+ *
+ * Seguridad (SEC-01): se exige BIOMETRIC_STRONG (Clase 3). El reconocimiento facial 2D
+ * suplantable y otras modalidades débiles (BIOMETRIC_WEAK) NO se aceptan en una app de
+ * finanzas. Si el dispositivo solo ofrece biometría débil, [isAvailable] devuelve false y
+ * la UI degrada a solo-PIN (no se muestra el acceso biométrico), conservando el PIN como
+ * único factor en esos equipos.
  */
 object BiometricHelper {
 
-    /** ¿El dispositivo tiene biometría utilizable y registrada? */
+    /**
+     * ¿El dispositivo tiene biometría FUERTE (Clase 3) utilizable y registrada?
+     *
+     * Se comprueba explícitamente BIOMETRIC_STRONG: si el sensor solo es WEAK, se devuelve
+     * false para degradar a solo-PIN en lugar de ofrecer un factor suplantable.
+     */
     fun isAvailable(context: Context): Boolean {
         return BiometricManager.from(context)
-            .canAuthenticate(BIOMETRIC_WEAK) == BiometricManager.BIOMETRIC_SUCCESS
+            .canAuthenticate(BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
     }
 
     fun authenticate(
@@ -56,7 +67,7 @@ object BiometricHelper {
             .setTitle(title)
             .setSubtitle(subtitle)
             .setNegativeButtonText("Usar PIN")
-            .setAllowedAuthenticators(BIOMETRIC_WEAK)
+            .setAllowedAuthenticators(BIOMETRIC_STRONG)
             .setConfirmationRequired(false)
             .build()
 

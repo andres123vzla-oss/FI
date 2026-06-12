@@ -30,10 +30,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.security.BiometricHelper
 import com.example.security.SecurityViewModel
 import com.example.ui.theme.ExcelDarkBlue
 import com.example.ui.theme.ExcelGreen
@@ -53,10 +56,12 @@ fun SecuritySettingsCard(
     val autoLockMinutes by securityViewModel.autoLockMinutes.collectAsState()
     val hideAmounts by securityViewModel.hideAmounts.collectAsState()
     val biometricAvailable = remember { securityViewModel.biometricAvailable() }
+    val context = LocalContext.current
 
     var showSetup by remember { mutableStateOf(false) }
     var showChange by remember { mutableStateOf(false) }
     var showRemove by remember { mutableStateOf(false) }
+    var showDisableBiometric by remember { mutableStateOf(false) }
     var lockExpanded by remember { mutableStateOf(false) }
 
     Card(
@@ -169,7 +174,28 @@ fun SecuritySettingsCard(
                         }
                         Switch(
                             checked = biometricEnabled,
-                            onCheckedChange = { securityViewModel.setBiometricEnabled(it) },
+                            onCheckedChange = { wantEnabled ->
+                                // SEC-04: no activar/desactivar a ciegas.
+                                if (wantEnabled) {
+                                    // Al ENCENDER: confirmar con un BiometricPrompt real; solo se
+                                    // habilita en onSuccess. En error/fallback NO se cambia el estado
+                                    // (biometricEnabled es la fuente de verdad observada).
+                                    val activity = context as? FragmentActivity
+                                    if (activity != null) {
+                                        BiometricHelper.authenticate(
+                                            activity = activity,
+                                            title = "Confirmar biometría",
+                                            subtitle = "Verifica tu biometría para habilitar el acceso rápido",
+                                            onSuccess = { securityViewModel.setBiometricEnabled(true) },
+                                            onError = { /* no se habilita */ },
+                                            onFallbackToPin = { /* no se habilita */ }
+                                        )
+                                    }
+                                } else {
+                                    // Al APAGAR: exigir el PIN actual, igual que "Quitar PIN".
+                                    showDisableBiometric = true
+                                }
+                            },
                             modifier = Modifier.testTag("biometric_switch")
                         )
                     }
@@ -270,6 +296,25 @@ fun SecuritySettingsCard(
             onConfirm = { pin, onError ->
                 securityViewModel.removePin(pin) { error ->
                     if (error == null) showRemove = false else onError(error)
+                }
+            }
+        )
+    }
+
+    if (showDisableBiometric) {
+        ConfirmPinDialog(
+            title = "Desactivar biometría",
+            message = "Ingresa tu PIN actual para desactivar el desbloqueo con biometría.",
+            confirmText = "Desactivar",
+            onDismiss = { showDisableBiometric = false },
+            onConfirm = { pin, onError ->
+                securityViewModel.verifyPin(pin) { ok ->
+                    if (ok) {
+                        securityViewModel.setBiometricEnabled(false)
+                        showDisableBiometric = false
+                    } else {
+                        onError("El PIN actual es incorrecto.")
+                    }
                 }
             }
         )

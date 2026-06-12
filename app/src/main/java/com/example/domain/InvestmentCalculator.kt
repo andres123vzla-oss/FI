@@ -32,6 +32,13 @@ data class PortfolioMetrics(
 /**
  * Cálculos de inversión: valor invertido/actual, ganancia/pérdida, rendimiento, peso en el
  * portafolio y mejor/peor activo. Protegido contra división por cero y listas vacías.
+ *
+ * CALC-02: el portafolio es USD-only. Todos los montos (invertido, actual, ganancia/pérdida y
+ * pesos) se agregan asumiendo una única moneda en dólares. El campo [InvestmentEntity.currency]
+ * existe en el esquema pero NO se usa en estos cálculos ni en el formateo de la UI (que muestra
+ * siempre USD); por eso se mantiene fijado a "USD". No hay conversión de tipo de cambio: registrar
+ * un activo en otra moneda produciría totales numéricamente incorrectos. Soportar multimoneda
+ * requeriría tasas de cambio y, eventualmente, una migración de esquema, fuera del alcance actual.
  */
 object InvestmentCalculator {
 

@@ -14,8 +14,10 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShowChart
@@ -41,7 +43,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.platform.LocalContext
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import com.example.data.database.AppDatabase
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -82,6 +89,14 @@ class MainActivity : FragmentActivity() {
             WindowManager.LayoutParams.FLAG_SECURE,
         )
         enableEdgeToEdge()
+        // A4: precalienta la BD cifrada (loadLibrary + Keystore + Room.build) FUERA del hilo Main,
+        // para que esos costes ya estén resueltos cuando se componga la rama UNLOCKED y no bloqueen
+        // el primer frame (jank/ANR al desbloquear). getDatabase es un singleton idempotente, así que
+        // el VM reutilizará la misma instancia. No expone datos: solo abre la BD; la passphrase sale
+        // del Keystore (desacoplada del PIN), no se loguea nada ni se lee contenido aquí.
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { AppDatabase.getDatabase(applicationContext) }
+        }
         val activity = this
         setContent {
             MyApplicationTheme {
@@ -115,8 +130,8 @@ fun AppRoot(activity: FragmentActivity) {
     }
 
     when (gate) {
-        // Aún no sabemos si hay PIN: splash neutro, nunca datos financieros.
-        LockGate.LOADING -> Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {}
+        // Aún no sabemos si hay PIN: splash neutro con la marca (candado), nunca datos financieros.
+        LockGate.LOADING -> LoadingSplash()
         // Primer inicio: se exige configurar el PIN antes de mostrar cualquier dato financiero.
         LockGate.SETUP -> SetupLockScreen(securityViewModel = securityViewModel)
         LockGate.LOCKED -> LockScreen(
@@ -143,6 +158,37 @@ fun AppRoot(activity: FragmentActivity) {
                     MainAppShell()
                 }
             }
+        }
+    }
+}
+
+/**
+ * UX-10: Splash del estado LOADING (mientras se resuelve si hay PIN). En lugar de una Surface en
+ * blanco (que se percibe como cuelgue), muestra el icono de marca (candado) centrado con un fade-in
+ * sutil. Usa un icono en vez de un spinner porque la transición a SETUP/LOCKED/UNLOCKED suele ser
+ * casi instantánea y un spinner parpadearía. Respeta "reducir movimiento" (sin animación) y el color
+ * de fondo del tema para funcionar en claro/oscuro. No expone ningún dato financiero.
+ */
+@Composable
+private fun LoadingSplash() {
+    val reduced = rememberReducedMotion()
+    val alpha = remember { Animatable(if (reduced) 1f else 0f) }
+    LaunchedEffect(Unit) {
+        if (!reduced) alpha.animateTo(1f, Motion.medium())
+    }
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = androidx.compose.ui.Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Lock,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .size(48.dp)
+                    .graphicsLayer { this.alpha = alpha.value },
+            )
         }
     }
 }
@@ -186,7 +232,12 @@ sealed class BottomNavItem(val route: String, val title: String, val icon: Image
 @Composable
 fun MainAppShell() {
     val navController = rememberNavController()
-    val viewModel: FinanceViewModel = viewModel()
+    // A5: construir el FinanceViewModel mediante su Factory explícita en vez del default de
+    // viewModel(), centralizando la creación y dejando margen para inyección/testabilidad.
+    val application = LocalContext.current.applicationContext as android.app.Application
+    val viewModel: FinanceViewModel = viewModel(
+        factory = FinanceViewModel.provideFactory(application)
+    )
 
     val navItems = listOf(
         BottomNavItem.Dashboard,

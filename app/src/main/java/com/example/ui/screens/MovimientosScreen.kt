@@ -34,8 +34,10 @@ import com.example.data.entity.TransactionEntity
 import com.example.ui.components.CategoryChip
 import com.example.ui.components.EmptyState
 import com.example.ui.components.FinanceCard
+import com.example.ui.components.LocalAmountsHidden
 import com.example.ui.components.MainTopBar
 import com.example.ui.components.PrivacyAmountText
+import com.example.ui.components.maskAmount
 import com.example.ui.components.pressScale
 import com.example.ui.theme.ExcelGreen
 import com.example.ui.theme.ExcelRed
@@ -271,7 +273,9 @@ fun MovimientosScreen(
                 ) {
                     items(transactionList, key = { it.id }) { tx ->
                         val categoryObj = rawCategories.firstOrNull { it.name == tx.categoryName }
-                        val colHex = categoryObj?.colorHex ?: "#1F4E79"
+                        // Fallback claro y legible (AccentBlue #4D8DFF, contraste ~5:1 sobre
+                        // superficie oscura) en vez del antiguo #1F4E79, demasiado oscuro como tint. UX-09.
+                        val colHex = categoryObj?.colorHex ?: "#4D8DFF"
                         val iconName = categoryObj?.iconName ?: "Category"
 
                         FinanceCard(
@@ -379,11 +383,12 @@ fun MovimientosScreen(
                                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        // Touch target accesible de 48dp (WCAG 2.5.5): el IconButton
+                                        // de M3 mide 48dp por defecto; el ícono mantiene su tamaño. UX-05.
                                         IconButton(
                                             onClick = {
                                                 showDeleteConfirmDialog = tx
-                                            },
-                                            modifier = Modifier.size(28.dp)
+                                            }
                                         ) {
                                             Icon(
                                                 Icons.Default.Delete,
@@ -422,10 +427,14 @@ fun MovimientosScreen(
 
     // Modal dialogue for Delete Confirmations
     showDeleteConfirmDialog?.let { transactionToDelete ->
+        // Respeta el modo privacidad global: si los montos están ocultos, se enmascara el monto
+        // del diálogo para no exponerlo a un hombro que mira. UX-12.
+        val amountsHidden = LocalAmountsHidden.current
+        val maskedAmount = maskAmount(FormatUtils.formatCLP(transactionToDelete.amount), amountsHidden)
         AlertDialog(
             onDismissRequest = { showDeleteConfirmDialog = null },
-            title = { Text("⚠️ Confirmación de Eliminación", fontWeight = FontWeight.Bold) },
-            text = { Text("¿Estás seguro de que deseas eliminar permanentemente este movimiento por un monto de ${FormatUtils.formatCLP(transactionToDelete.amount)} ('${transactionToDelete.description}')?") },
+            title = { Text("Confirmación de Eliminación", fontWeight = FontWeight.Bold) },
+            text = { Text("¿Estás seguro de que deseas eliminar permanentemente este movimiento por un monto de $maskedAmount ('${transactionToDelete.description}')?") },
             confirmButton = {
                 Button(
                     onClick = {
@@ -519,7 +528,7 @@ fun AddEditTransactionFormDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                if (transaction == null) "➕ Nuevo Movimiento" else "📝 Editar Movimiento",
+                if (transaction == null) "Nuevo Movimiento" else "Editar Movimiento",
                 fontWeight = FontWeight.Bold
             )
         },

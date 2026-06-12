@@ -1,6 +1,7 @@
 package com.example.security
 
 import android.content.Context
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -67,18 +68,51 @@ object DatabaseKeyProvider {
     private fun masterKey(): SecretKey {
         val keystore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         (keystore.getEntry(KEYSTORE_ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
+        // Clave nueva (solo instalaciones nuevas): las existentes conservan su clave previa.
+        return generateMasterKey(strongBox = true)
+    }
+
+    /**
+     * Crea la clave maestra del Keystore.
+     *
+     * Endurecimiento (SEC-02):
+     * - setUnlockedDeviceRequired(true) (API >= 28): la clave solo es utilizable con el
+     *   dispositivo desbloqueado. La BD solo se abre desde la Activity en foreground (equipo
+     *   ya desbloqueado), por lo que no rompe el arranque.
+     * - setIsStrongBoxBacked(true) (API >= 28): respaldo en elemento seguro si existe; si no,
+     *   StrongBoxUnavailableException provoca un reintento sin StrongBox.
+     *
+     * NO se usa setUserAuthenticationRequired(true): la BD se abre de forma lazy sin un flujo
+     * de re-autenticación ligado y lanzaría UserNotAuthenticatedException rompiendo el arranque.
+     */
+    private fun generateMasterKey(strongBox: Boolean): SecretKey {
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-        generator.init(
-            KeyGenParameterSpec.Builder(
-                KEYSTORE_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-            )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .build(),
+        val builder = KeyGenParameterSpec.Builder(
+            KEYSTORE_ALIAS,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
         )
-        return generator.generateKey()
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            builder.setUnlockedDeviceRequired(true)
+            if (strongBox) builder.setIsStrongBoxBacked(true)
+        }
+        generator.init(builder.build())
+        return try {
+            generator.generateKey()
+        } catch (e: Exception) {
+            // StrongBoxUnavailableException (API 28+, subtipo de ProviderException): el equipo
+            // declara StrongBox pero no puede aprovisionarlo. Se referencia por nombre para no
+            // cargar la clase en API < 28 (minSdk 24). Si fue por StrongBox, reintentar sin él.
+            if (strongBox &&
+                e.javaClass.simpleName == "StrongBoxUnavailableException"
+            ) {
+                generateMasterKey(strongBox = false)
+            } else {
+                throw e
+            }
+        }
     }
 
     private fun encrypt(plain: ByteArray): Pair<ByteArray, ByteArray> {

@@ -80,10 +80,19 @@ interface FinanceDao {
     @Query("SELECT * FROM investments ORDER BY ticker ASC")
     fun getAllInvestments(): Flow<List<InvestmentEntity>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * C1 (A3 dedupe inversiones): devuelve la posición existente para un ticker (o null).
+     * Lo usa FinanceRepository.addOrMergeInvestment para decidir si fusiona o inserta.
+     */
+    @Query("SELECT * FROM investments WHERE ticker = :ticker LIMIT 1")
+    suspend fun getInvestmentByTicker(ticker: String): InvestmentEntity?
+
+    // A3: NUNCA OnConflictStrategy.REPLACE en investments (borraría la posición previa al
+    // chocar el índice único en ticker). Se usa ABORT; la fusión la maneja el repositorio.
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertInvestment(investment: InvestmentEntity): Long
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertInvestments(investments: List<InvestmentEntity>)
 
     @Update
@@ -94,4 +103,37 @@ interface FinanceDao {
 
     @Query("DELETE FROM investments")
     suspend fun clearAllInvestments()
+
+    // --- Operaciones atómicas (A2: seed/clear multi-tabla sin estado inconsistente) ---
+
+    /**
+     * A2: borra las 4 tablas y reinserta el conjunto completo en una sola transacción.
+     * Room hace rollback ante CancellationException o cualquier excepción, garantizando
+     * todo-o-nada. Más rápido que ~32 operaciones sueltas.
+     */
+    @Transaction
+    suspend fun replaceAllData(
+        categories: List<CategoryEntity>,
+        budgets: List<BudgetEntity>,
+        investments: List<InvestmentEntity>,
+        transactions: List<TransactionEntity>,
+    ) {
+        clearAllTransactions()
+        clearAllCategories()
+        clearAllBudgets()
+        clearAllInvestments()
+        insertCategories(categories)
+        insertBudgets(budgets)
+        insertInvestments(investments)
+        transactions.forEach { insertTransaction(it) }
+    }
+
+    /** A2: borra las 4 tablas de forma atómica. */
+    @Transaction
+    suspend fun clearAll() {
+        clearAllTransactions()
+        clearAllCategories()
+        clearAllBudgets()
+        clearAllInvestments()
+    }
 }

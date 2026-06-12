@@ -28,6 +28,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -48,6 +50,7 @@ import com.example.ui.components.EmptyState
 import com.example.ui.components.FinanceCard
 import com.example.ui.components.StatusPill
 import com.example.ui.components.CountUpAmountText
+import com.example.ui.components.LocalAmountsHidden
 import com.example.ui.components.PrivacyAmountText
 import com.example.ui.security.ConfirmPinDialog
 import com.example.ui.theme.*
@@ -115,10 +118,19 @@ fun DashboardScreen(
             }
         )
 
-        // Estado vacío profesional: si no hay ningún dato financiero (ni movimientos ni activos),
-        // no se muestran KPIs ni números; se invita a empezar o a restaurar datos demo.
+        // Estado de carga vs vacío (UX-03): los flows de Room/SQLCipher arrancan con valor vacío
+        // antes de resolver. Para no mostrar por un frame el estado vacío "Aún no hay datos" a un
+        // usuario que sí tiene datos, se da una breve ventana de asentamiento mostrando un skeleton.
+        // Si llegan datos, se muestra el contenido; si tras la ventana sigue vacío, el estado vacío.
         val isCompletelyEmpty = allTransactions.isEmpty() && allInvestments.isEmpty()
-        if (isCompletelyEmpty) {
+        var settled by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.delay(300)
+            settled = true
+        }
+        if (isCompletelyEmpty && !settled) {
+            DashboardSkeleton(modifier = Modifier.weight(1f))
+        } else if (isCompletelyEmpty) {
             DashboardEmptyState(
                 modifier = Modifier.weight(1f),
                 onAddIncome = { dialogType = "INCOME"; showAddDialog = true },
@@ -217,15 +229,27 @@ fun DashboardScreen(
                         Brush.linearGradient(listOf(AccentBlue, AccentCyan))
                     )
             ) {
-                // Brillo radial decorativo (estático, sutil) en la esquina superior.
+                // Brillo radial decorativo (estático, sutil) en la esquina superior. Alpha reducido
+                // para no contrarrestar el scrim oscuro de contraste (UX-02).
                 Box(
                     modifier = Modifier
                         .matchParentSize()
                         .background(
                             Brush.radialGradient(
-                                colors = listOf(Color.White.copy(alpha = 0.10f), Color.Transparent),
+                                colors = listOf(Color.White.copy(alpha = 0.06f), Color.Transparent),
                                 center = Offset(x = Float.POSITIVE_INFINITY, y = 0f),
                                 radius = 600f,
+                            )
+                        )
+                )
+                // Scrim oscuro sobre TODO el degradado: garantiza contraste AA del texto blanco
+                // translúcido en todo el ancho, incluido el lado claro (AccentCyan). UX-02.
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Black.copy(alpha = 0.25f), Color.Black.copy(alpha = 0.40f))
                             )
                         )
                 )
@@ -326,7 +350,7 @@ fun DashboardScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            "🧠 Métricas del Mes",
+                            "Métricas del Mes",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         // Estado financiero (no expone montos).
@@ -487,7 +511,7 @@ fun DashboardScreen(
             ) {
                 Column {
                     Text(
-                        "📈 Comparativa Mensual (Ingresos vs Gastos)",
+                        "Comparativa Mensual (Ingresos vs Gastos)",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                     )
                     Spacer(modifier = Modifier.height(16.dp))
@@ -501,10 +525,26 @@ fun DashboardScreen(
                         // Color de las gridlines (capturado fuera del DrawScope del Canvas).
                         val gridlineColor = MaterialTheme.colorScheme.outlineVariant
 
+                        // Accesibilidad (UX-04): el Canvas es un dibujo puro; sin esto TalkBack no
+                        // anuncia nada. Se construye un resumen textual por mes RESPETANDO el modo
+                        // privacidad: si los montos están ocultos, no se filtran a TalkBack.
+                        val amountsHidden = LocalAmountsHidden.current
+                        val chartDescription = if (amountsHidden) {
+                            "Gráfico comparativo de ingresos y gastos por mes. Montos ocultos por privacidad."
+                        } else {
+                            "Comparativa mensual de ingresos y gastos. " +
+                                summariesList.joinToString(separator = ". ") { sum ->
+                                    "${monthNames[sum.month - 1]} ${sum.year}: " +
+                                        "ingresos ${FormatUtils.formatCLP(sum.income)}, " +
+                                        "gastos ${FormatUtils.formatCLP(sum.expense)}"
+                                }
+                        }
+
                         Canvas(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(160.dp)
+                                .semantics { contentDescription = chartDescription }
                         ) {
                             val canvasWidth = size.width
                             val canvasHeight = size.height
@@ -559,16 +599,28 @@ fun DashboardScreen(
                         }
 
                         Spacer(modifier = Modifier.height(12.dp))
+                        // Leyenda con icono direccional ADEMÁS del color, para no depender solo del
+                        // par verde/rojo (daltonismo deutan/protan). UX-04.
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Box(modifier = Modifier.size(10.dp).background(ExcelGreen))
+                            Icon(
+                                Icons.Default.ArrowUpward,
+                                contentDescription = null,
+                                tint = ExcelGreen,
+                                modifier = Modifier.size(12.dp)
+                            )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Ingresos", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface)
                             Spacer(modifier = Modifier.width(16.dp))
-                            Box(modifier = Modifier.size(10.dp).background(ExcelRed))
+                            Icon(
+                                Icons.Default.ArrowDownward,
+                                contentDescription = null,
+                                tint = ExcelRed,
+                                modifier = Modifier.size(12.dp)
+                            )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Gastos", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface)
                         }
@@ -582,7 +634,7 @@ fun DashboardScreen(
             ) {
                 Column {
                     Text(
-                        "📌 Desglose de Gastos por Categoría",
+                        "Desglose de Gastos por Categoría",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                     )
                     Spacer(modifier = Modifier.height(12.dp))
@@ -628,7 +680,9 @@ fun DashboardScreen(
                     } else {
                         dashboardData.categorySpendingList.forEach { item ->
                             val categoryObj = rawCategories.firstOrNull { it.name == item.categoryName }
-                            val colHex = categoryObj?.colorHex ?: "#1F4E79"
+                            // Fallback claro y legible (AccentBlue #4D8DFF, contraste ~5:1 sobre la
+                            // superficie oscura) en vez del antiguo #1F4E79, muy oscuro como tint. UX-09.
+                            val colHex = categoryObj?.colorHex ?: "#4D8DFF"
                             val iconName = categoryObj?.iconName ?: "Category"
                             val categoryColor = try {
                                 Color(colHex.toColorInt())
@@ -636,7 +690,15 @@ fun DashboardScreen(
                                 MaterialTheme.colorScheme.primary
                             }
 
-                            Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                            // Semántica fusionada (UX-04): TalkBack lee nombre + monto + porcentaje
+                            // como una sola unidad; el monto sigue enmascarado por PrivacyAmountText
+                            // según privacidad. La barra de progreso no aporta texto adicional, así
+                            // que no se lee dos veces el porcentaje.
+                            Column(
+                                modifier = Modifier
+                                    .padding(vertical = 6.dp)
+                                    .semantics(mergeDescendants = true) {}
+                            ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -740,7 +802,7 @@ fun DashboardScreen(
     if (showResetConfirm) {
         AlertDialog(
             onDismissRequest = { showResetConfirm = false },
-            title = { Text("⚡ ¿Restaurar datos semilla?", fontWeight = FontWeight.Bold) },
+            title = { Text("¿Restaurar datos semilla?", fontWeight = FontWeight.Bold) },
             text = { Text("Esto sobrescribirá tus movimientos actuales con los balances originales (Ingresos: CLP 1.090.094, Gastos: CLP 748.825).") },
             confirmButton = {
                 Button(
@@ -775,6 +837,61 @@ fun DashboardScreen(
                     }
                 }
             }
+        )
+    }
+}
+
+/**
+ * Skeleton de carga del Dashboard (UX-03): superficies neutras del tamaño aproximado de las
+ * tarjetas reales mientras Room/SQLCipher resuelve la primera emisión. No muestra números ni
+ * datos sensibles; solo placeholders. Evita el parpadeo del estado vacío en usuarios con datos.
+ */
+@Composable
+private fun DashboardSkeleton(
+    modifier: Modifier = Modifier,
+) {
+    val placeholder = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        // Fila de KPIs
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(72.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(placeholder)
+            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(72.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(placeholder)
+            )
+        }
+        // Hero de balance
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(140.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(placeholder)
+        )
+        // Tarjeta de métricas
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(160.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(placeholder)
         )
     }
 }
@@ -966,7 +1083,7 @@ fun AddTransactionDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                if (type == "INCOME") "➕ Agregar Ingreso" else "💸 Agregar Gasto",
+                if (type == "INCOME") "Agregar Ingreso" else "Agregar Gasto",
                 fontWeight = FontWeight.Bold,
                 color = if (type == "INCOME") ExcelGreen else ExcelRed
             )
@@ -1111,7 +1228,7 @@ fun AddStockDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text("📈 Agregar Activo / Acción", fontWeight = FontWeight.Bold, color = ExcelMediumBlue)
+            Text("Agregar Activo / Acción", fontWeight = FontWeight.Bold, color = ExcelMediumBlue)
         },
         text = {
             Column(

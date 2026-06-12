@@ -367,7 +367,7 @@ fun AjustesScreen(
     if (showResetSemillaConfirm) {
         AlertDialog(
             onDismissRequest = { showResetSemillaConfirm = false },
-            title = { Text("⚡ ¿Restaurar datos semilla?", fontWeight = FontWeight.Bold) },
+            title = { Text("¿Restaurar datos semilla?", fontWeight = FontWeight.Bold) },
             text = { Text("Esto sobrescribirá tus movimientos actuales con los balances originales del Excel (Ingresos: CLP 1.090.094, Gastos: CLP 748.825, Bolsa).") },
             confirmButton = {
                 Button(
@@ -397,7 +397,7 @@ fun AjustesScreen(
     if (showDeleteAllConfirm) {
         AlertDialog(
             onDismissRequest = { showDeleteAllConfirm = false },
-            title = { Text("🚨 ¿Confirmas la eliminación total?", fontWeight = FontWeight.Bold, color = ExcelRed) },
+            title = { Text("¿Confirmas la eliminación total?", fontWeight = FontWeight.Bold, color = ExcelRed) },
             text = { Text("Esta acción es irreversible. Se borrará permanentemente todo tu historial, presupuestos y portafolio de acciones local.") },
             confirmButton = {
                 Button(
@@ -455,18 +455,20 @@ fun AddEditCategoryFormDialog(
     var name by remember { mutableStateOf(category?.name ?: "") }
     var type by remember { mutableStateOf(category?.type ?: defaultType) }
 
-    // Preselected beautiful material colors for client selections
+    // Paleta de colores asignables a categorías. Se evitan tonos demasiado oscuros (Slate #37474F,
+    // Cobalt #1565C0) porque se usan como tint de icono/barra sobre superficies oscuras del
+    // Dashboard y quedaban con bajo contraste; se reemplazan por variantes más claras y legibles. UX-09.
     val palette = listOf(
-        "#107C41", // Excel Green
-        "#C62828", // Excel Red
-        "#0078D4", // Excel Blue
-        "#EF6C00", // Orange
-        "#6A1B9A", // Purple
-        "#00838F", // Teal
-        "#37474F", // Slate
-        "#D84315", // Deep Orange
-        "#C2185B", // Deep Pink
-        "#1565C0"  // Cobalt Blue
+        "#2EA043", // Verde (más claro que #107C41)
+        "#E04A4A", // Rojo (más claro que #C62828)
+        "#4D8DFF", // Azul acento (AccentBlue)
+        "#FB8C00", // Naranja
+        "#9C5BD6", // Púrpura (más claro que #6A1B9A)
+        "#26A6B3", // Teal (más claro que #00838F)
+        "#78909C", // Slate claro (antes #37474F)
+        "#FF7043", // Naranja intenso
+        "#E05A8A", // Rosa (más claro que #C2185B)
+        "#5B9BFF"  // Cobalto claro (antes #1565C0)
     )
     var selectedColor by remember { mutableStateOf(category?.colorHex ?: palette.first()) }
 
@@ -477,7 +479,7 @@ fun AddEditCategoryFormDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text(if (category == null) "➕ Agregar Categoría Nueva" else "📝 Editar Categoría", fontWeight = FontWeight.Bold)
+            Text(if (category == null) "Agregar Categoría Nueva" else "Editar Categoría", fontWeight = FontWeight.Bold)
         },
         text = {
             Column(

@@ -40,6 +40,7 @@ import com.example.data.entity.InvestmentEntity
 import com.example.security.SecurityViewModel
 import com.example.ui.components.AmountVisibilityToggle
 import com.example.ui.components.EmptyState
+import com.example.ui.components.ErrorState
 import com.example.ui.components.FinanceCard
 import com.example.ui.components.MainTopBar
 import com.example.ui.components.CountUpAmountText
@@ -52,8 +53,6 @@ import com.example.ui.theme.ExcelGreen
 import com.example.ui.theme.ExcelMediumBlue
 import com.example.ui.theme.ExcelRed
 import com.example.ui.theme.LocalFinanceColors
-import com.example.ui.theme.Success
-import com.example.ui.theme.Negative
 import com.example.ui.viewmodel.FinanceViewModel
 import com.example.ui.viewmodel.PriceUpdateState
 import com.example.util.FormatUtils
@@ -63,6 +62,12 @@ import java.util.Locale
 
 /** Intervalo del refresco de precios en vivo (foreground). Acorde al rate limit del tier gratis. */
 private const val AUTO_REFRESH_INTERVAL_MS = 60_000L
+
+// Colores de rendimiento CLAROS para usar SOBRE el scrim oscuro de la hero card (UX-02). Son más
+// luminosos que Success/Negative del tema para mantener contraste AA (>4.5:1) sobre el degradado
+// azul→cyan oscurecido. Solo aplican dentro de la tarjeta hero; el resto usa los colores del tema.
+private val HeroPositive = Color(0xFF6EE7B7)
+private val HeroNegative = Color(0xFFFCA5A5)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -148,15 +153,27 @@ fun PortafolioScreen(
                     .clip(heroShape)
                     .background(Brush.linearGradient(listOf(AccentBlue, AccentCyan)))
             ) {
-                // Brillo radial decorativo (estático, sutil) en la esquina superior.
+                // Brillo radial decorativo (estático, sutil) en la esquina superior. Se reduce su
+                // alpha para no contrarrestar el scrim oscuro de contraste (UX-02).
                 Box(
                     modifier = Modifier
                         .matchParentSize()
                         .background(
                             Brush.radialGradient(
-                                colors = listOf(Color.White.copy(alpha = 0.10f), Color.Transparent),
+                                colors = listOf(Color.White.copy(alpha = 0.06f), Color.Transparent),
                                 center = Offset(x = Float.POSITIVE_INFINITY, y = 0f),
                                 radius = 600f,
+                            )
+                        )
+                )
+                // Scrim oscuro sobre TODO el degradado: garantiza contraste AA (>4.5:1) del texto
+                // blanco translúcido en todo el ancho, incluido el lado claro (AccentCyan). UX-02.
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Black.copy(alpha = 0.25f), Color.Black.copy(alpha = 0.40f))
                             )
                         )
                 )
@@ -205,7 +222,9 @@ fun PortafolioScreen(
                             val gl = metrics.totalGainLoss
                             val pct = metrics.totalYieldPercent
                             val sign = if (gl >= 0) "+" else ""
-                            val labelColor = if (gl >= 0) Success else Negative
+                            // Sobre el scrim oscuro se usan variantes CLARAS de alto contraste
+                            // (Success/Negative son demasiado luminosos-medios para AA). UX-02.
+                            val labelColor = if (gl >= 0) HeroPositive else HeroNegative
 
                             // Monto enmascarable; el porcentaje siempre visible (no revela monto exacto).
                             PrivacyAmountText(
@@ -235,7 +254,7 @@ fun PortafolioScreen(
                                     Text("Mejor activo", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.7f))
                                     Text(
                                         "${best.ticker}  ${FormatUtils.formatPercentage2Signed(best.yieldPercent)}",
-                                        style = MaterialTheme.typography.bodyMedium.copy(color = Success, fontWeight = FontWeight.Bold),
+                                        style = MaterialTheme.typography.bodyMedium.copy(color = HeroPositive, fontWeight = FontWeight.Bold),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -249,7 +268,7 @@ fun PortafolioScreen(
                                     Text("Peor activo", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.7f))
                                     Text(
                                         "${worst.ticker}  ${FormatUtils.formatPercentage2Signed(worst.yieldPercent)}",
-                                        style = MaterialTheme.typography.bodyMedium.copy(color = Negative, fontWeight = FontWeight.Bold),
+                                        style = MaterialTheme.typography.bodyMedium.copy(color = HeroNegative, fontWeight = FontWeight.Bold),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -379,11 +398,24 @@ fun PortafolioScreen(
             )
 
             if (metrics.stocks.isEmpty()) {
-                EmptyState(
-                    modifier = Modifier.weight(1f),
-                    message = "No tienes activos registrados. Presiona '+' para agregar.",
-                    icon = Icons.AutoMirrored.Filled.ShowChart
-                )
+                // UX-08: diferencia "vacío" (sin activos) de "error" (falló la carga de precios).
+                // Si la lista está vacía por un fallo de red/API, se muestra ErrorState con acción
+                // de reintento en vez del estado vacío genérico.
+                val loadErrorMessage = (priceState as? PriceUpdateState.Error)?.message ?: liveError
+                if (loadErrorMessage != null) {
+                    ErrorState(
+                        modifier = Modifier.weight(1f),
+                        message = loadErrorMessage,
+                        icon = Icons.Default.CloudOff,
+                        onRetry = { viewModel.refreshPrices() },
+                    )
+                } else {
+                    EmptyState(
+                        modifier = Modifier.weight(1f),
+                        message = "No tienes activos registrados. Presiona '+' para agregar.",
+                        icon = Icons.AutoMirrored.Filled.ShowChart
+                    )
+                }
             } else {
                 LazyColumn(
                     state = stocksListState,
@@ -461,11 +493,12 @@ fun PortafolioScreen(
                                         )
                                     }
 
+                                    // Touch target accesible de 48dp (WCAG 2.5.5): el IconButton de
+                                    // M3 mide 48dp por defecto; el ícono mantiene su tamaño visual. UX-05.
                                     IconButton(
                                         onClick = {
                                             showDeleteConfirmDialog = rawStocks.firstOrNull { it.id == stock.id }
-                                        },
-                                        modifier = Modifier.size(28.dp)
+                                        }
                                     ) {
                                         Icon(
                                             Icons.Default.Delete,
@@ -572,7 +605,7 @@ fun PortafolioScreen(
         AlertDialog(
             onDismissRequest = { selectedStockToEdit = null },
             title = {
-                Text("📈 Editar Stock: ${stock.ticker}", fontWeight = FontWeight.Bold, color = ExcelMediumBlue)
+                Text("Editar Stock: ${stock.ticker}", fontWeight = FontWeight.Bold, color = ExcelMediumBlue)
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -664,7 +697,7 @@ fun PortafolioScreen(
     showDeleteConfirmDialog?.let { currentDeletingStock ->
         AlertDialog(
             onDismissRequest = { showDeleteConfirmDialog = null },
-            title = { Text("🗑️ Confirmar Retiro", fontWeight = FontWeight.Bold) },
+            title = { Text("Confirmar Retiro", fontWeight = FontWeight.Bold) },
             text = { Text("¿Deseas de verdad eliminar la acción ${currentDeletingStock.ticker} (${currentDeletingStock.companyName}) por completo?") },
             confirmButton = {
                 Button(

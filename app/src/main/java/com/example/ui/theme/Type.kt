@@ -67,17 +67,19 @@ val Typography =
         fontSize = 16.sp,
         lineHeight = 22.sp,
       ),
+    // UX-11: se rebaja el peso del cuerpo para recuperar jerarquía frente a títulos y
+    // mejorar la legibilidad en pantallas densas (antes Bold/SemiBold "todo en negrita").
     bodyLarge =
       TextStyle(
         fontFamily = AppFontFamily,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.Medium,
         fontSize = 16.sp,
         lineHeight = 24.sp,
       ),
     bodyMedium =
       TextStyle(
         fontFamily = AppFontFamily,
-        fontWeight = FontWeight.SemiBold,
+        fontWeight = FontWeight.Normal,
         fontSize = 14.sp,
         lineHeight = 20.sp,
       ),

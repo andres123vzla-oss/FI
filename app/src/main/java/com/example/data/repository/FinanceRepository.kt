@@ -23,12 +23,6 @@ class FinanceRepository(private val dao: FinanceDao) {
      * automática que llame a esta función; una base vacía nunca se re-siembra sola.
      */
     suspend fun restoreSeedData() {
-        // Clear everything first
-        dao.clearAllTransactions()
-        dao.clearAllCategories()
-        dao.clearAllBudgets()
-        dao.clearAllInvestments()
-
         // 1. Core Categories
         val defaultCategories = listOf(
             // Incomes
@@ -58,7 +52,6 @@ class FinanceRepository(private val dao: FinanceDao) {
             CategoryEntity(name = "Regalos", type = "EXPENSE", colorHex = "#C2185B", iconName = "CardGiftcard", isDefault = false),
             CategoryEntity(name = "Ocio", type = "EXPENSE", colorHex = "#D84315", iconName = "SportsEsports", isDefault = false),
         )
-        dao.insertCategories(defaultCategories)
 
         // 2. Budget Initial (for month=5, year=2026)
         val initialBudgets = listOf(
@@ -71,7 +64,6 @@ class FinanceRepository(private val dao: FinanceDao) {
             BudgetEntity(categoryName = "Ahorro", month = 5, year = 2026, plannedAmount = 150000.0),
             BudgetEntity(categoryName = "Otros", month = 5, year = 2026, plannedAmount = 50000.0),
         )
-        dao.insertBudgets(initialBudgets)
 
         // 3. Stock Seed Data
         val initialStocks = listOf(
@@ -84,7 +76,6 @@ class FinanceRepository(private val dao: FinanceDao) {
             InvestmentEntity(ticker = "MA", companyName = "Mastercard", quantity = 0.409148217, purchasePrice = 493.34, currentPrice = 494.04),
             InvestmentEntity(ticker = "AMZN", companyName = "Amazon.com", quantity = 1.127453887, purchasePrice = 269.78, currentPrice = 270.64)
         )
-        dao.insertInvestments(initialStocks)
 
         // 4. Incomes Seed Data (Total: CLP 1.090.094)
         val seedIncomes = listOf(
@@ -94,9 +85,6 @@ class FinanceRepository(private val dao: FinanceDao) {
             TransactionEntity(type = "INCOME", date = "2026-05-04", categoryName = "Otros ingresos", description = "INACAP", amount = 40000.0),
             TransactionEntity(type = "INCOME", date = "2026-05-05", categoryName = "Otros ingresos", description = "Beneficios", amount = 32000.0)
         )
-        for (inc in seedIncomes) {
-            dao.insertTransaction(inc)
-        }
 
         // 5. Expense Seed Data (Total: CLP 748.825)
         val seedExpenses = listOf(
@@ -109,16 +97,20 @@ class FinanceRepository(private val dao: FinanceDao) {
             TransactionEntity(type = "EXPENSE", date = "2026-05-07", categoryName = "Ocio", description = "Despedida Edu", amount = 5160.0),
             TransactionEntity(type = "EXPENSE", date = "2026-05-29", categoryName = "Alimentación", description = "Harina, jamón y queso", amount = 25000.0)
         )
-        for (exp in seedExpenses) {
-            dao.insertTransaction(exp)
-        }
+
+        // A2: reemplazo atómico (borrar 4 tablas + reinsertar todo) en una sola transacción.
+        // El conjunto sembrado es idéntico al anterior; solo cambia la atomicidad/rendimiento.
+        dao.replaceAllData(
+            categories = defaultCategories,
+            budgets = initialBudgets,
+            investments = initialStocks,
+            transactions = seedIncomes + seedExpenses,
+        )
     }
 
     suspend fun clearAllData() {
-        dao.clearAllTransactions()
-        dao.clearAllCategories()
-        dao.clearAllBudgets()
-        dao.clearAllInvestments()
+        // A2: borrado atómico de las 4 tablas.
+        dao.clearAll()
     }
 
     // --- Direct CRUD delegation ---
@@ -140,4 +132,62 @@ class FinanceRepository(private val dao: FinanceDao) {
     suspend fun insertInvestment(investment: InvestmentEntity) = dao.insertInvestment(investment)
     suspend fun updateInvestment(investment: InvestmentEntity) = dao.updateInvestment(investment)
     suspend fun deleteInvestmentById(id: Int) = dao.deleteInvestmentById(id)
+
+    /**
+     * C1 (A3 dedupe inversiones): añade un activo evitando duplicados por ticker.
+     *
+     * - Si el ticker YA existe, FUSIONA la posición: la cantidad pasa a ser q_old + q_new y el
+     *   precio de compra es el PROMEDIO PONDERADO por cantidad de ambos lotes; luego hace
+     *   updateInvestment sobre la fila existente (conserva su id). NUNCA borra la posición previa.
+     * - Si no existe, inserta una fila nueva.
+     *
+     * Cuidado numérico: si la cantidad total resultara <= 0 (caso degenerado, p. ej. ambos lotes
+     * en 0), se evita la división por cero usando el último purchasePrice conocido como fallback.
+     * El currentPrice se actualiza al valor más reciente provisto.
+     */
+    suspend fun addOrMergeInvestment(
+        ticker: String,
+        companyName: String,
+        quantity: Double,
+        purchasePrice: Double,
+        currentPrice: Double,
+        currency: String = "USD",
+    ) {
+        val normalizedTicker = ticker.trim().uppercase()
+        val existing = dao.getInvestmentByTicker(normalizedTicker)
+        if (existing == null) {
+            dao.insertInvestment(
+                InvestmentEntity(
+                    ticker = normalizedTicker,
+                    companyName = companyName,
+                    quantity = quantity,
+                    purchasePrice = purchasePrice,
+                    currentPrice = currentPrice,
+                    currency = currency,
+                )
+            )
+            return
+        }
+
+        val mergedQuantity = existing.quantity + quantity
+        // Promedio ponderado por cantidad: (q1*p1 + q2*p2) / (q1+q2).
+        val mergedPurchasePrice = if (mergedQuantity > 0.0) {
+            (existing.quantity * existing.purchasePrice + quantity * purchasePrice) / mergedQuantity
+        } else {
+            // Caso degenerado (cantidad total no positiva): se conserva el precio nuevo provisto
+            // para no dividir por cero ni producir NaN/Infinity.
+            purchasePrice
+        }
+
+        dao.updateInvestment(
+            existing.copy(
+                companyName = companyName,
+                quantity = mergedQuantity,
+                purchasePrice = mergedPurchasePrice,
+                currentPrice = currentPrice,
+                currency = currency,
+                updatedAt = System.currentTimeMillis(),
+            )
+        )
+    }
 }
