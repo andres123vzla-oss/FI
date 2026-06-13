@@ -22,7 +22,7 @@ kotlinxCoroutinesAndroid = "1.10.2"
 kotlinxCoroutinesCore = "1.10.2"
 datastorePreferences = "1.1.7"
 biometric = "1.1.0"
-sqlcipher = "4.6.1"
+sqlcipher = "4.16.0"
 robolectric = "4.16.1"
 roborazzi = "1.59.0"
 
