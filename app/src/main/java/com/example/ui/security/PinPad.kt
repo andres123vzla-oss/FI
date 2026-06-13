@@ -155,10 +155,13 @@ private fun IconKeyButton(
         animationSpec = Motion.fast(reduced),
         label = "iconKeyScale",
     )
+    // UX2-10: UNA sola fuente de semántica en el nodo accionable (el Surface clicable); antes el
+    // Box interior y el Icon duplicaban el contentDescription y TalkBack anunciaba "Borrar, Borrar".
     Surface(
         modifier = modifier
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(CircleShape),
+            .clip(CircleShape)
+            .semantics { contentDescription = description },
         color = if (enabled) container else container.copy(alpha = 0.3f),
         onClick = onClick,
         enabled = enabled,
@@ -168,13 +171,12 @@ private fun IconKeyButton(
         androidx.compose.foundation.layout.Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 18.dp)
-                .semantics { contentDescription = description },
+                .padding(vertical = 18.dp),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = icon,
-                contentDescription = description,
+                contentDescription = null, // UX2-10: la etiqueta vive en el Surface accionable.
                 modifier = Modifier.size(26.dp),
                 tint = if (enabled) tint else tint.copy(alpha = 0.4f)
             )

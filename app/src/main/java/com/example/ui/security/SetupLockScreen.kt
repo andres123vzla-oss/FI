@@ -31,6 +31,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -100,17 +103,19 @@ fun SetupLockScreen(
 
             Spacer(Modifier.height(28.dp))
 
+            // UX2-08: el Text de error queda SIEMPRE compuesto (text vacío si no hay error) para
+            // que el liveRegion exista antes del cambio y TalkBack anuncie el mensaje.
             Box(modifier = Modifier.height(24.dp), contentAlignment = Alignment.Center) {
-                if (error != null) {
-                    Text(
-                        text = error!!,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.testTag("setup_error")
-                    )
-                }
+                Text(
+                    text = error ?: "",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .testTag("setup_error")
+                        .semantics { liveRegion = LiveRegionMode.Polite }
+                )
             }
 
             Spacer(Modifier.height(8.dp))
@@ -152,7 +157,9 @@ fun SetupLockScreen(
                         return@Button
                     }
                     saving = true
-                    securityViewModel.setupPin(pin) { err ->
+                    // SEC2-08: el PIN vive como String de UI (residuo aceptado, ver
+                    // SecurityDialogs.kt); la copia CharArray que viaja al hasher la borra el VM.
+                    securityViewModel.setupPin(pin.toCharArray()) { err ->
                         saving = false
                         if (err != null) error = err
                         // En éxito, setupPin desbloquea y el gate pasa a UNLOCKED automáticamente.

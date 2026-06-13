@@ -3,7 +3,7 @@ plugins {
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.roborazzi)
-  alias(libs.plugins.secrets)
+  // BLD2-08: plugin de secrets retirado (neutralizado desde SEC-10, sin función).
 }
 
 android {
@@ -19,11 +19,9 @@ android {
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-    // SEC-10: ÚNICA fuente de campos BuildConfig. Estos campos se declaran SOLO aquí; el plugin
-    // de secrets (bloque `secrets { }` más abajo) se neutraliza apuntándolo a un fichero de
-    // propiedades inexistente para que NO emita campos al BuildConfig. Así se evita el riesgo de
-    // campo duplicado (p. ej. el antiguo GEMINI_API_KEY estaba a la vez aquí y en `app/.env`,
-    // lo que rompía la compilación del BuildConfig generado).
+    // SEC-10/BLD2-08: ÚNICA fuente de campos BuildConfig. El antiguo plugin de secrets (que
+    // inyectaba campos desde `app/.env` y provocaba duplicados como GEMINI_API_KEY) fue
+    // primero neutralizado (SEC-10) y finalmente RETIRADO del build (BLD2-08).
     //
     // Fallback VACÍO seguro: no se hardcodean claves reales; si no hay valor quedan como "" y la
     // app funciona en modo manual/local.
@@ -73,13 +71,10 @@ android {
   testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 
-// SEC-10: el plugin de secrets se neutraliza a propósito. Los campos de BuildConfig se declaran
-// como ÚNICA fuente en defaultConfig (arriba). Apuntar el plugin a un fichero de propiedades
-// inexistente evita que emita campos (p. ej. el GEMINI_API_KEY de `app/.env`, que ya no se usa),
-// previniendo BuildConfig con campos duplicados y errores de compilación.
-secrets {
-  propertiesFileName = "secrets.properties.unused"
-  defaultPropertiesFileName = "secrets.defaults.unused"
+// ARQ2-07: exportar los esquemas JSON de Room a app/schemas/ (versionados en git) para poder
+// testear migraciones con MigrationTestHelper. Acompaña a exportSchema=true en @Database.
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {

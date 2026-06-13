@@ -3,6 +3,7 @@ package com.example.ui.security
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -30,17 +31,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.security.BiometricHelper
 import com.example.security.SecurityViewModel
-import com.example.ui.theme.ExcelDarkBlue
-import com.example.ui.theme.ExcelGreen
-import com.example.ui.theme.ExcelRed
+import com.example.ui.theme.LocalFinanceColors
 
 /**
  * Tarjeta de configuración de seguridad para la pantalla de Ajustes.
@@ -57,12 +57,16 @@ fun SecuritySettingsCard(
     val hideAmounts by securityViewModel.hideAmounts.collectAsState()
     val biometricAvailable = remember { securityViewModel.biometricAvailable() }
     val context = LocalContext.current
+    // UX2-01: tokens semánticos del tema en lugar de colores Excel* hardcodeados.
+    val finance = LocalFinanceColors.current
 
     var showSetup by remember { mutableStateOf(false) }
     var showChange by remember { mutableStateOf(false) }
     var showRemove by remember { mutableStateOf(false) }
     var showDisableBiometric by remember { mutableStateOf(false) }
     var lockExpanded by remember { mutableStateOf(false) }
+    // Error del flujo de activación biométrica (enableBiometric), visible bajo la fila.
+    var biometricError by remember { mutableStateOf<String?>(null) }
 
     Card(
         modifier = modifier
@@ -81,10 +85,10 @@ fun SecuritySettingsCard(
                     modifier = Modifier
                         .size(40.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(ExcelDarkBlue.copy(alpha = 0.1f)),
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Lock, contentDescription = null, tint = ExcelDarkBlue)
+                    Icon(Icons.Default.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 }
                 Spacer(Modifier.width(16.dp))
                 Column(Modifier.weight(1f)) {
@@ -95,7 +99,7 @@ fun SecuritySettingsCard(
                     Text(
                         if (isPinSet) "Protegido con PIN" else "Sin protección configurada",
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (isPinSet) ExcelGreen else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        color = if (isPinSet) finance.success else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
                 }
             }
@@ -103,11 +107,23 @@ fun SecuritySettingsCard(
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
 
             // Privacidad: ocultar montos sensibles (independiente del PIN, solo presentación).
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // UX2-06: toda la fila es el objetivo táctil/accesible (toggleable con Role.Switch);
+            // el Switch interno es solo visual (onCheckedChange = null) y el testTag vive en la fila.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .toggleable(
+                        value = hideAmounts,
+                        role = Role.Switch,
+                        onValueChange = { securityViewModel.setHideAmounts(it) }
+                    )
+                    .testTag("hide_amounts_switch"),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Icon(
                     if (hideAmounts) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                     contentDescription = null,
-                    tint = ExcelDarkBlue,
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(24.dp)
                 )
                 Spacer(Modifier.width(12.dp))
@@ -124,8 +140,7 @@ fun SecuritySettingsCard(
                 }
                 Switch(
                     checked = hideAmounts,
-                    onCheckedChange = { securityViewModel.setHideAmounts(it) },
-                    modifier = Modifier.testTag("hide_amounts_switch")
+                    onCheckedChange = null
                 )
             }
 
@@ -135,7 +150,10 @@ fun SecuritySettingsCard(
                 Button(
                     onClick = { showSetup = true },
                     modifier = Modifier.fillMaxWidth().testTag("setup_pin_button"),
-                    colors = ButtonDefaults.buttonColors(containerColor = ExcelDarkBlue)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = Color.White
+                    )
                 ) {
                     Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -153,11 +171,41 @@ fun SecuritySettingsCard(
 
                 // Biometría
                 if (biometricAvailable) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    // UX2-06: fila completa toggleable (Role.Switch); el Switch es solo visual y el
+                    // testTag se traslada a la fila. La lógica asimétrica SEC-04 vive en onValueChange.
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .toggleable(
+                                value = biometricEnabled,
+                                role = Role.Switch,
+                                onValueChange = { wantEnabled ->
+                                    // SEC-04: no activar/desactivar a ciegas.
+                                    biometricError = null
+                                    if (wantEnabled) {
+                                        // Al ENCENDER: el ViewModel muestra el BiometricPrompt con
+                                        // CryptoObject y persiste el gate; solo queda habilitada si
+                                        // onResult(null). En error NO se cambia el estado
+                                        // (biometricEnabled es la fuente de verdad observada).
+                                        val activity = context as? FragmentActivity
+                                        if (activity != null) {
+                                            securityViewModel.enableBiometric(activity) { error ->
+                                                if (error != null) biometricError = error
+                                            }
+                                        }
+                                    } else {
+                                        // Al APAGAR: exigir el PIN actual, igual que "Quitar PIN".
+                                        showDisableBiometric = true
+                                    }
+                                }
+                            )
+                            .testTag("biometric_switch"),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Icon(
                             Icons.Default.Fingerprint,
                             contentDescription = null,
-                            tint = ExcelDarkBlue,
+                            tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(Modifier.width(12.dp))
@@ -174,29 +222,17 @@ fun SecuritySettingsCard(
                         }
                         Switch(
                             checked = biometricEnabled,
-                            onCheckedChange = { wantEnabled ->
-                                // SEC-04: no activar/desactivar a ciegas.
-                                if (wantEnabled) {
-                                    // Al ENCENDER: confirmar con un BiometricPrompt real; solo se
-                                    // habilita en onSuccess. En error/fallback NO se cambia el estado
-                                    // (biometricEnabled es la fuente de verdad observada).
-                                    val activity = context as? FragmentActivity
-                                    if (activity != null) {
-                                        BiometricHelper.authenticate(
-                                            activity = activity,
-                                            title = "Confirmar biometría",
-                                            subtitle = "Verifica tu biometría para habilitar el acceso rápido",
-                                            onSuccess = { securityViewModel.setBiometricEnabled(true) },
-                                            onError = { /* no se habilita */ },
-                                            onFallbackToPin = { /* no se habilita */ }
-                                        )
-                                    }
-                                } else {
-                                    // Al APAGAR: exigir el PIN actual, igual que "Quitar PIN".
-                                    showDisableBiometric = true
-                                }
-                            },
-                            modifier = Modifier.testTag("biometric_switch")
+                            onCheckedChange = null
+                        )
+                    }
+                    // Error al activar la biometría (incluye fallos del prompt/gate).
+                    if (biometricError != null) {
+                        Text(
+                            text = biometricError!!,
+                            color = finance.negative,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.testTag("biometric_error")
                         )
                     }
                 }
@@ -206,7 +242,7 @@ fun SecuritySettingsCard(
                     Icon(
                         Icons.Default.LockClock,
                         contentDescription = null,
-                        tint = ExcelDarkBlue,
+                        tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(24.dp)
                     )
                     Spacer(Modifier.width(12.dp))
@@ -257,7 +293,7 @@ fun SecuritySettingsCard(
                     icon = Icons.Default.LockReset,
                     title = "Quitar PIN",
                     subtitle = "Desactiva el bloqueo (requiere PIN actual)",
-                    tint = ExcelRed,
+                    tint = finance.negative,
                     onClick = { showRemove = true },
                     testTag = "remove_pin_row"
                 )
@@ -265,11 +301,15 @@ fun SecuritySettingsCard(
         }
     }
 
+    // SEC2-08: los diálogos mantienen el PIN como String de UI (residuo aceptado, ver
+    // SecurityDialogs.kt); aquí se entrega la copia CharArray que el ViewModel borra tras usarla.
+    // Los errores devueltos incluyen los mensajes de lockout ("Demasiados intentos. Espera N s.")
+    // y se muestran tal cual (SEC2-03).
     if (showSetup) {
         SetupPinDialog(
             onDismiss = { showSetup = false },
             onConfirm = { pin, onError ->
-                securityViewModel.setupPin(pin) { error ->
+                securityViewModel.setupPin(pin.toCharArray()) { error ->
                     if (error == null) showSetup = false else onError(error)
                 }
             }
@@ -280,7 +320,7 @@ fun SecuritySettingsCard(
         ChangePinDialog(
             onDismiss = { showChange = false },
             onConfirm = { current, new, onError ->
-                securityViewModel.changePin(current, new) { error ->
+                securityViewModel.changePin(current.toCharArray(), new.toCharArray()) { error ->
                     if (error == null) showChange = false else onError(error)
                 }
             }
@@ -294,7 +334,7 @@ fun SecuritySettingsCard(
             confirmText = "Quitar PIN",
             onDismiss = { showRemove = false },
             onConfirm = { pin, onError ->
-                securityViewModel.removePin(pin) { error ->
+                securityViewModel.removePin(pin.toCharArray()) { error ->
                     if (error == null) showRemove = false else onError(error)
                 }
             }
@@ -308,12 +348,14 @@ fun SecuritySettingsCard(
             confirmText = "Desactivar",
             onDismiss = { showDisableBiometric = false },
             onConfirm = { pin, onError ->
-                securityViewModel.verifyPin(pin) { ok ->
+                // SEC-04: desactivar solo tras confirmar el PIN actual (consume intentos/lockout,
+                // SEC2-03); el error del VM se muestra tal cual.
+                securityViewModel.verifyPin(pin.toCharArray()) { ok, error ->
                     if (ok) {
-                        securityViewModel.setBiometricEnabled(false)
+                        securityViewModel.disableBiometric()
                         showDisableBiometric = false
                     } else {
-                        onError("El PIN actual es incorrecto.")
+                        onError(error ?: "El PIN actual es incorrecto.")
                     }
                 }
             }
@@ -327,7 +369,8 @@ private fun SettingRow(
     title: String,
     subtitle: String,
     onClick: () -> Unit,
-    tint: androidx.compose.ui.graphics.Color = ExcelDarkBlue,
+    // UX2-01: color semántico del tema (antes ExcelDarkBlue).
+    tint: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.primary,
     testTag: String = ""
 ) {
     Row(

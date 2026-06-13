@@ -16,7 +16,12 @@ data class TransactionEntity(
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
-@Entity(tableName = "categories")
+// ARQ2-05: índice único en (name, type) — sin él, addCategory permitía dos "Comida" idénticas
+// y todo el modelo referencia categorías por nombre. El insert usa ABORT + manejo en el VM.
+@Entity(
+    tableName = "categories",
+    indices = [Index(value = ["name", "type"], unique = true)],
+)
 data class CategoryEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val name: String,
@@ -26,7 +31,13 @@ data class CategoryEntity(
     val isDefault: Boolean = false
 )
 
-@Entity(tableName = "budgets")
+// ARQ2-05: índice único en (categoryName, month, year) — con REPLACE en el insert, esto da la
+// semántica upsert deseada (una sola fila de presupuesto por categoría y mes), eliminando las
+// filas fantasma que budgetReportFlow ocultaba con firstOrNull.
+@Entity(
+    tableName = "budgets",
+    indices = [Index(value = ["categoryName", "month", "year"], unique = true)],
+)
 data class BudgetEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val categoryName: String, // Links to CategoryEntity.name

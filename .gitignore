@@ -14,7 +14,13 @@
 .externalNativeBuild
 .cxx
 local.properties
+# BLD2-05: backups de local.properties (p. ej. .winbak del flujo de build WSL) pueden contener
+# rutas locales o credenciales y NO deben subirse.
+local.properties.*
+*.winbak
 .env
 debug.keystore
 *.jks
 *.keystore
+# BLD2-04: un keystore codificado en base64 esquivaba las reglas anteriores.
+*.keystore.base64

@@ -18,6 +18,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -28,6 +31,16 @@ import com.example.security.SecurityViewModel
 private fun sanitizePin(input: String): String =
     input.filter { it.isDigit() }.take(SecurityViewModel.MAX_PIN_LENGTH)
 
+/**
+ * Campo de PIN basado en [OutlinedTextField].
+ *
+ * SEC2-08 (residuo aceptado): estos diálogos mantienen el PIN como `String` en estado Compose
+ * (`mutableStateOf("")` + campo de texto). Los `String` de la UI y del IME son inmutables y no
+ * borrables, por lo que pueden quedar copias en memoria hasta el GC; no es alcanzable una
+ * garantía de borrado de extremo a extremo desde estas superficies. La vía `CharArray`
+ * (`.toCharArray()` hacia el ViewModel) cubre la copia que viaja al hasher, que sí se borra
+ * tras su uso.
+ */
 @Composable
 private fun PinField(
     value: String,
@@ -67,9 +80,14 @@ fun SetupPinDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
-                if (error != null) {
-                    Text(error!!, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
-                }
+                // UX2-08: error siempre compuesto + liveRegion para que TalkBack lo anuncie.
+                Text(
+                    error ?: "",
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                )
                 PinField(pin, { pin = it }, "Nuevo PIN", "setup_pin_field")
                 PinField(confirm, { confirm = it }, "Confirmar PIN", "setup_pin_confirm_field")
             }
@@ -106,9 +124,14 @@ fun ChangePinDialog(
         title = { Text("Cambiar PIN", fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (error != null) {
-                    Text(error!!, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
-                }
+                // UX2-08: error siempre compuesto + liveRegion para que TalkBack lo anuncie.
+                Text(
+                    error ?: "",
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                )
                 PinField(current, { current = it }, "PIN actual", "change_current_pin_field")
                 PinField(newPin, { newPin = it }, "Nuevo PIN", "change_new_pin_field")
                 PinField(confirm, { confirm = it }, "Confirmar nuevo PIN", "change_confirm_pin_field")
@@ -155,9 +178,14 @@ fun ConfirmPinDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
-                if (error != null) {
-                    Text(error!!, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
-                }
+                // UX2-08: error siempre compuesto + liveRegion para que TalkBack lo anuncie.
+                Text(
+                    error ?: "",
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                )
                 PinField(pin, { pin = it }, "PIN", "confirm_pin_field")
             }
         },

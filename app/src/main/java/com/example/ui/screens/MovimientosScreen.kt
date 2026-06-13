@@ -18,12 +18,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -39,9 +43,9 @@ import com.example.ui.components.MainTopBar
 import com.example.ui.components.PrivacyAmountText
 import com.example.ui.components.maskAmount
 import com.example.ui.components.pressScale
-import com.example.ui.theme.ExcelGreen
-import com.example.ui.theme.ExcelRed
+import com.example.ui.theme.LocalFinanceColors
 import com.example.ui.viewmodel.FinanceViewModel
+import com.example.util.FinanceCalculator
 import com.example.util.FormatUtils
 import com.example.util.IconMapper
 import java.text.SimpleDateFormat
@@ -63,13 +67,35 @@ fun MovimientosScreen(
     val activeYear by viewModel.filterYear.collectAsState()
     val activeSearch by viewModel.searchQuery.collectAsState()
 
-    // Dialog state
-    var showAddEditDialog by remember { mutableStateOf(false) }
-    var selectedTransactionToEdit by remember { mutableStateOf<TransactionEntity?>(null) }
-    var showDeleteConfirmDialog by remember { mutableStateOf<TransactionEntity?>(null) }
+    // UX2-01: tokens semánticos del tema en lugar de constantes Excel* acopladas a la marca.
+    val finance = LocalFinanceColors.current
+
+    // Dialog state — UX2-09: rememberSaveable para sobrevivir rotación/muerte de proceso.
+    var showAddEditDialog by rememberSaveable { mutableStateOf(false) }
+    // UX2-09: TransactionEntity no es Saveable; se persiste solo el id (Int) y se
+    // re-resuelve la entidad desde el flow del ViewModel en cada composición.
+    var selectedTransactionToEditId by rememberSaveable { mutableStateOf<Int?>(null) }
+    var deleteConfirmTransactionId by rememberSaveable { mutableStateOf<Int?>(null) }
+    val allTransactions by viewModel.allTransactions.collectAsState()
+    val selectedTransactionToEdit: TransactionEntity? =
+        selectedTransactionToEditId?.let { id -> allTransactions.firstOrNull { it.id == id } }
+    val transactionToDelete: TransactionEntity? =
+        deleteConfirmTransactionId?.let { id -> allTransactions.firstOrNull { it.id == id } }
 
     val monthNames = listOf("Todos", "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic")
-    val yearsOptions = listOf("Todos", "2025", "2026", "2027")
+    // UX2-12: años derivados de los datos reales (incluye el año del filtro activo y
+    // fallback al año actual) en vez de la lista cableada "2025/2026/2027".
+    val years by viewModel.availableYears.collectAsState()
+    val yearsOptions = listOf("Todos") + years.map { it.toString() }
+
+    // UX2-07: ventana de asentamiento (mismo patrón que DashboardScreen): los flows de
+    // Room/SQLCipher emiten vacío en el primer frame, lo que mostraba un parpadeo del
+    // EmptyState a usuarios que sí tienen datos.
+    var settled by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(300)
+        settled = true
+    }
 
     val transactionsListState = rememberLazyListState()
 
@@ -79,7 +105,7 @@ fun MovimientosScreen(
             val fabInteraction = remember { MutableInteractionSource() }
             FloatingActionButton(
                 onClick = {
-                    selectedTransactionToEdit = null
+                    selectedTransactionToEditId = null
                     showAddEditDialog = true
                 },
                 containerColor = MaterialTheme.colorScheme.primary,
@@ -207,8 +233,10 @@ fun MovimientosScreen(
             }
 
             // --- RESUMEN DE LO FILTRADO ---
-            val filteredIncome = transactionList.filter { it.type == "INCOME" }.sumOf { it.amount }
-            val filteredExpense = transactionList.filter { it.type == "EXPENSE" }.sumOf { it.amount }
+            // FIN2-02: suma defensiva que ignora valores no finitos (NaN/Infinity) para que
+            // un dato corrupto no contamine todo el resumen.
+            val filteredIncome = FinanceCalculator.sum(transactionList.filter { it.type == "INCOME" }.map { it.amount })
+            val filteredExpense = FinanceCalculator.sum(transactionList.filter { it.type == "EXPENSE" }.map { it.amount })
             val filteredBalance = filteredIncome - filteredExpense
             if (transactionList.isNotEmpty()) {
                 FinanceCard(
@@ -226,16 +254,16 @@ fun MovimientosScreen(
                             Text("Ingresos (filtro)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             PrivacyAmountText(
                                 amount = FormatUtils.formatCLP(filteredIncome),
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = ExcelGreen),
-                                color = ExcelGreen,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = finance.success),
+                                color = finance.success,
                             )
                         }
                         Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("Gastos (filtro)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             PrivacyAmountText(
                                 amount = FormatUtils.formatCLP(filteredExpense),
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = ExcelRed),
-                                color = ExcelRed,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = finance.negative),
+                                color = finance.negative,
                             )
                         }
                         Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
@@ -244,9 +272,9 @@ fun MovimientosScreen(
                                 amount = FormatUtils.formatCLP(filteredBalance),
                                 style = MaterialTheme.typography.bodyMedium.copy(
                                     fontWeight = FontWeight.Bold,
-                                    color = if (filteredBalance >= 0) ExcelGreen else ExcelRed
+                                    color = if (filteredBalance >= 0) finance.success else finance.negative
                                 ),
-                                color = if (filteredBalance >= 0) ExcelGreen else ExcelRed,
+                                color = if (filteredBalance >= 0) finance.success else finance.negative,
                             )
                         }
                     }
@@ -255,7 +283,11 @@ fun MovimientosScreen(
             }
 
             // --- LEDGER TRANSACTIONS LIST ---
-            if (transactionList.isEmpty()) {
+            // UX2-07: mientras la base aún no emite (ventana de 300 ms), se muestra un
+            // contenedor neutro en vez del EmptyState para evitar el parpadeo inicial.
+            if (transactionList.isEmpty() && !settled) {
+                Box(modifier = Modifier.weight(1f))
+            } else if (transactionList.isEmpty()) {
                 EmptyState(
                     modifier = Modifier.weight(1f),
                     message = "No se encontraron movimientos con los filtros seleccionados.",
@@ -285,7 +317,7 @@ fun MovimientosScreen(
                                 .testTag("transaction_item_${tx.id}"),
                             contentPadding = PaddingValues(12.dp),
                             onClick = {
-                                selectedTransactionToEdit = tx
+                                selectedTransactionToEditId = tx.id
                                 showAddEditDialog = true
                             }
                         ) {
@@ -366,7 +398,7 @@ fun MovimientosScreen(
                                 ) {
                                     val formattedVal = FormatUtils.formatCLP(tx.amount)
                                     val amountText = if (tx.type == "INCOME") "+ $formattedVal" else "- $formattedVal"
-                                    val amountColor = if (tx.type == "INCOME") ExcelGreen else ExcelRed
+                                    val amountColor = if (tx.type == "INCOME") finance.success else finance.negative
 
                                     PrivacyAmountText(
                                         amount = amountText,
@@ -387,13 +419,13 @@ fun MovimientosScreen(
                                         // de M3 mide 48dp por defecto; el ícono mantiene su tamaño. UX-05.
                                         IconButton(
                                             onClick = {
-                                                showDeleteConfirmDialog = tx
+                                                deleteConfirmTransactionId = tx.id
                                             }
                                         ) {
                                             Icon(
                                                 Icons.Default.Delete,
                                                 contentDescription = "Borrar",
-                                                tint = ExcelRed,
+                                                tint = finance.negative,
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         }
@@ -416,7 +448,9 @@ fun MovimientosScreen(
             onDismiss = { showAddEditDialog = false },
             onSave = { type, date, categoryName, description, amount ->
                 if (editingTx != null) {
-                    viewModel.updateTransaction(editingTx.id, type, date, categoryName, description, amount)
+                    // ARQ2-03: se pasa la entidad original completa para que el ViewModel
+                    // preserve createdAt (y demás campos no editados) vía copy().
+                    viewModel.updateTransaction(editingTx, type, date, categoryName, description, amount)
                 } else {
                     viewModel.addTransaction(type, date, categoryName, description, amount)
                 }
@@ -426,28 +460,29 @@ fun MovimientosScreen(
     }
 
     // Modal dialogue for Delete Confirmations
-    showDeleteConfirmDialog?.let { transactionToDelete ->
+    transactionToDelete?.let { txToDelete ->
         // Respeta el modo privacidad global: si los montos están ocultos, se enmascara el monto
         // del diálogo para no exponerlo a un hombro que mira. UX-12.
         val amountsHidden = LocalAmountsHidden.current
-        val maskedAmount = maskAmount(FormatUtils.formatCLP(transactionToDelete.amount), amountsHidden)
+        val maskedAmount = maskAmount(FormatUtils.formatCLP(txToDelete.amount), amountsHidden)
         AlertDialog(
-            onDismissRequest = { showDeleteConfirmDialog = null },
+            onDismissRequest = { deleteConfirmTransactionId = null },
             title = { Text("Confirmación de Eliminación", fontWeight = FontWeight.Bold) },
-            text = { Text("¿Estás seguro de que deseas eliminar permanentemente este movimiento por un monto de $maskedAmount ('${transactionToDelete.description}')?") },
+            text = { Text("¿Estás seguro de que deseas eliminar permanentemente este movimiento por un monto de $maskedAmount ('${txToDelete.description}')?") },
             confirmButton = {
                 Button(
                     onClick = {
-                        viewModel.deleteTransaction(transactionToDelete)
-                        showDeleteConfirmDialog = null
+                        viewModel.deleteTransaction(txToDelete)
+                        deleteConfirmTransactionId = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = ExcelRed)
+                    // UX2-01: token semántico + contentColor explícito para contraste estable.
+                    colors = ButtonDefaults.buttonColors(containerColor = finance.negative, contentColor = Color.White)
                 ) {
                     Text("Eliminar", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteConfirmDialog = null }) {
+                TextButton(onClick = { deleteConfirmTransactionId = null }) {
                     Text("Cancelar")
                 }
             }
@@ -462,13 +497,22 @@ fun AddEditTransactionFormDialog(
     onDismiss: () -> Unit,
     onSave: (type: String, date: String, categoryName: String, description: String, amount: Double) -> Unit
 ) {
-    var type by remember { mutableStateOf(transaction?.type ?: "EXPENSE") }
-    var amountStr by remember { mutableStateOf(transaction?.amount?.let { if (it % 1.0 == 0.0) it.toInt().toString() else it.toString() } ?: "") }
-    var descStr by remember { mutableStateOf(transaction?.description ?: "") }
+    // UX2-01: tokens semánticos del tema en lugar de constantes Excel*.
+    val finance = LocalFinanceColors.current
+
+    // UX2-09: campos del formulario en rememberSaveable (sobreviven rotación/muerte de
+    // proceso) y keyed por transaction?.id para que abrir otro registro no reutilice
+    // el estado del anterior.
+    var type by rememberSaveable(transaction?.id) { mutableStateOf(transaction?.type ?: "EXPENSE") }
+    var amountStr by rememberSaveable(transaction?.id) { mutableStateOf(transaction?.amount?.let { if (it % 1.0 == 0.0) it.toInt().toString() else it.toString() } ?: "") }
+    var descStr by rememberSaveable(transaction?.id) { mutableStateOf(transaction?.description ?: "") }
 
     // Dropdown available categories based on currently chosen transaction type
     val filteredCategories = categories.filter { it.type == type }
-    var selectedCategoryName by remember {
+    // UX2-09 (residuo documentado): selectedCategoryName queda en remember keyed por id;
+    // hacerlo saveable no aporta porque el LaunchedEffect(type) de más abajo lo
+    // re-sincroniza en cada nueva composición y pisaría el valor restaurado.
+    var selectedCategoryName by remember(transaction?.id) {
         mutableStateOf(
             if (transaction != null && transaction.type == type) {
                 transaction.categoryName
@@ -490,21 +534,23 @@ fun AddEditTransactionFormDialog(
     var expandedCategoryDropdown by remember { mutableStateOf(false) }
 
     // Date picker setup
+    // UX2-03/FIN2-01: para un movimiento nuevo la fecha por defecto es HOY
+    // (Calendar.getInstance()); se elimina la fecha semilla cableada 2026-05-29.
     val calendar = Calendar.getInstance()
     if (transaction != null) {
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        // FIN2-11: Locale.US también en el PARSER. El formato yyyy-MM-dd usa dígitos
+        // ASCII; con Locale.getDefault() en locales no latinos el parse fallaba y el
+        // catch vacío reseteaba la fecha en silencio.
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         try {
             sdf.parse(transaction.date)?.let { calendar.time = it }
         } catch (e: Exception) {}
-    } else {
-        // May 29, 2026 default seed settings
-        calendar.set(Calendar.YEAR, 2026)
-        calendar.set(Calendar.MONTH, Calendar.MAY)
-        calendar.set(Calendar.DAY_OF_MONTH, 29)
     }
 
-    val formatter = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-    var dateStr by remember { mutableStateOf(formatter.format(calendar.time)) }
+    // FIN2-11: Locale.US en la escritura para persistir siempre dígitos ASCII.
+    val formatter = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    // UX2-09: fecha saveable y keyed por transaction?.id.
+    var dateStr by rememberSaveable(transaction?.id) { mutableStateOf(formatter.format(calendar.time)) }
 
     val context = LocalContext.current
     val datePickerDialog = DatePickerDialog(
@@ -522,7 +568,8 @@ fun AddEditTransactionFormDialog(
         calendar.get(Calendar.DAY_OF_MONTH)
     )
 
-    var errorMsg by remember { mutableStateOf("") }
+    // UX2-09: mensaje de error saveable y keyed por transaction?.id.
+    var errorMsg by rememberSaveable(transaction?.id) { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -537,9 +584,15 @@ fun AddEditTransactionFormDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                if (errorMsg.isNotEmpty()) {
-                    Text(errorMsg, color = ExcelRed, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                }
+                // UX2-08: el Text permanece siempre compuesto (string vacío) y con
+                // liveRegion Polite para que TalkBack anuncie el error al aparecer.
+                Text(
+                    errorMsg,
+                    color = finance.negative,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                )
 
                 // Selector: Income vs Expense tabs
                 TabRow(
@@ -549,12 +602,12 @@ fun AddEditTransactionFormDialog(
                     Tab(
                         selected = type == "INCOME",
                         onClick = { type = "INCOME" },
-                        text = { Text("Ingresos", fontWeight = FontWeight.Bold, color = if (type == "INCOME") ExcelGreen else MaterialTheme.colorScheme.onSurfaceVariant) }
+                        text = { Text("Ingresos", fontWeight = FontWeight.Bold, color = if (type == "INCOME") finance.success else MaterialTheme.colorScheme.onSurfaceVariant) }
                     )
                     Tab(
                         selected = type == "EXPENSE",
                         onClick = { type = "EXPENSE" },
-                        text = { Text("Gastos", fontWeight = FontWeight.Bold, color = if (type == "EXPENSE") ExcelRed else MaterialTheme.colorScheme.onSurfaceVariant) }
+                        text = { Text("Gastos", fontWeight = FontWeight.Bold, color = if (type == "EXPENSE") finance.negative else MaterialTheme.colorScheme.onSurfaceVariant) }
                      )
                 }
 
@@ -627,7 +680,9 @@ fun AddEditTransactionFormDialog(
             Button(
                 onClick = {
                     val amt = amountStr.toDoubleOrNull()
-                    if (amt == null || amt <= 0.0) {
+                    // FIN2-02: rechaza también NaN/Infinity (p.ej. "NaN" o "1e400"),
+                    // que toDoubleOrNull acepta y corromperían los totales.
+                    if (amt == null || !amt.isFinite() || amt <= 0.0) {
                         errorMsg = "El monto debe ser un número entero mayor a 0."
                         return@Button
                     }
@@ -637,7 +692,11 @@ fun AddEditTransactionFormDialog(
                     }
                     onSave(type, dateStr, selectedCategoryName, descStr.ifEmpty { "Movimiento" }, amt)
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = if (type == "INCOME") ExcelGreen else ExcelRed),
+                // UX2-01: tokens semánticos + contentColor explícito para contraste estable.
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (type == "INCOME") finance.success else finance.negative,
+                    contentColor = Color.White
+                ),
                 modifier = Modifier.testTag("save_tx_btn")
             ) {
                 Text("Confirmar", fontWeight = FontWeight.Bold)

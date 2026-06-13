@@ -39,6 +39,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -62,8 +67,11 @@ fun LockScreen(
     onBiometricRequested: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // SEC-08: el PIN se acumula en un buffer de caracteres borrable (no un String inmutable que
-    // quedaría retenido en memoria). Se entrega como CharArray a la verificación y se limpia.
+    // SEC-08: en ESTA pantalla el PIN se acumula en un buffer de caracteres borrable (no un String
+    // inmutable) que se entrega como CharArray a la verificación y se limpia. Nota: las superficies
+    // de setup/cambio de PIN usan campos de texto (String/IME), por lo que esta propiedad aplica
+    // solo al desbloqueo y no es una garantía de extremo a extremo (residuo aceptado, ver SEC2-08
+    // en SecurityDialogs.kt).
     val pin = remember { mutableStateListOf<Char>() }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -135,10 +143,17 @@ fun LockScreen(
             Spacer(Modifier.height(28.dp))
 
             // Indicadores de dígitos (no se muestra el PIN en claro).
+            // UX2-08: clearAndSetSemantics para que TalkBack NO lea el placeholder "• • • •";
+            // se anuncia solo la CANTIDAD de dígitos, nunca valores.
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.offset { IntOffset(shakeX.value.roundToInt(), 0) }
+                modifier = Modifier
+                    .offset { IntOffset(shakeX.value.roundToInt(), 0) }
+                    .clearAndSetSemantics {
+                        contentDescription = "${pin.size} dígitos ingresados"
+                        liveRegion = LiveRegionMode.Polite
+                    }
             ) {
                 if (pin.isEmpty()) {
                     Text(
@@ -156,17 +171,19 @@ fun LockScreen(
 
             Spacer(Modifier.height(16.dp))
 
+            // UX2-08: el Text de error queda SIEMPRE compuesto (text vacío si no hay error) para
+            // que el liveRegion exista antes del cambio y TalkBack anuncie el mensaje.
             Box(modifier = Modifier.height(24.dp), contentAlignment = Alignment.Center) {
-                if (error != null) {
-                    Text(
-                        text = error!!,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.testTag("lock_error")
-                    )
-                }
+                Text(
+                    text = error ?: "",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .testTag("lock_error")
+                        .semantics { liveRegion = LiveRegionMode.Assertive }
+                )
             }
 
             Spacer(Modifier.height(8.dp))

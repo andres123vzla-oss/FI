@@ -95,7 +95,11 @@ class MainActivity : FragmentActivity() {
         // el VM reutilizará la misma instancia. No expone datos: solo abre la BD; la passphrase sale
         // del Keystore (desacoplada del PIN), no se loguea nada ni se lee contenido aquí.
         lifecycleScope.launch(Dispatchers.IO) {
+            // ARQ2-09: conservar el diagnóstico del primer fallo (antes se tragaba en silencio y
+            // el primer síntoma era el constructor del FinanceViewModel). No se loguea ningún
+            // detalle de la passphrase/Keystore, solo el stacktrace del error.
             runCatching { AppDatabase.getDatabase(applicationContext) }
+                .onFailure { android.util.Log.e("FI", "DB warm-up failed", it) }
         }
         val activity = this
         setContent {
@@ -137,11 +141,9 @@ fun AppRoot(activity: FragmentActivity) {
         LockGate.LOCKED -> LockScreen(
             securityViewModel = securityViewModel,
             onBiometricRequested = {
-                BiometricHelper.authenticate(
-                    activity = activity,
-                    onSuccess = { securityViewModel.onBiometricUnlockSucceeded() },
-                    onError = { /* el usuario puede usar el PIN */ }
-                ) { /* el teclado de PIN ya está visible */ }
+                // SEC2-04: el desbloqueo biométrico exige el binding criptográfico (CryptoObject
+                // + token del gate); el éxito del prompt por sí solo ya no desbloquea.
+                securityViewModel.requestBiometricUnlock(activity)
             }
         )
         LockGate.UNLOCKED -> {

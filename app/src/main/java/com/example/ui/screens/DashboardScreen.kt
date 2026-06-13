@@ -19,6 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -28,7 +29,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -37,6 +40,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.graphics.toColorInt
 import com.example.data.entity.CategoryEntity
@@ -80,11 +86,30 @@ fun DashboardScreen(
     val selectedMonth by viewModel.selectedMonth.collectAsState()
     val selectedYear by viewModel.selectedYear.collectAsState()
 
-    var showAddDialog by remember { mutableStateOf(value = false) }
-    var dialogType by remember { mutableStateOf("INCOME") } // INCOME, EXPENSE
-    var showAddStockDialog by remember { mutableStateOf(false) }
-    var showResetConfirm by remember { mutableStateOf(false) }
+    // UX2-09: los flags de visibilidad de diálogos sobreviven a la muerte de proceso / rotación.
+    var showAddDialog by rememberSaveable { mutableStateOf(value = false) }
+    var dialogType by rememberSaveable { mutableStateOf("INCOME") } // INCOME, EXPENSE
+    var showAddStockDialog by rememberSaveable { mutableStateOf(false) }
+    var showResetConfirm by rememberSaveable { mutableStateOf(false) }
+    // UX2-09: reauthAction es una lambda y NO es saveable (meterla en rememberSaveable crashea
+    // al serializar el Bundle); se mantiene en remember normal de forma deliberada.
     var reauthAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    // FIN2-04: refresca la fecha "de hoy" al volver a primer plano (ON_RESUME) para que
+    // daysElapsed/proyección no queden congelados si la app cruza la medianoche en segundo
+    // plano. Mismo patrón de LifecycleEventObserver usado en MainActivity.AppRoot.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshDateTick()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // UX2-01: tokens semánticos del tema (con variante clara/oscura) en vez de los alias
+    // estáticos Excel* que no se adaptaban al modo claro.
+    val finance = LocalFinanceColors.current
 
     // Dropdowns / Calendars helper
     val monthNames = listOf(
@@ -205,7 +230,7 @@ fun DashboardScreen(
                     title = "Ingresos Totales",
                     amount = FormatUtils.formatCLPCompact(dashboardData.incomeTotal),
                     icon = Icons.Default.ArrowUpward,
-                    color = ExcelGreen,
+                    color = finance.success,
                     testTag = "kpi_income"
                 )
                 KpiCard(
@@ -213,7 +238,7 @@ fun DashboardScreen(
                     title = "Gastos Totales",
                     amount = FormatUtils.formatCLPCompact(dashboardData.expenseTotal),
                     icon = Icons.Default.ArrowDownward,
-                    color = ExcelRed,
+                    color = finance.negative,
                     testTag = "kpi_expense"
                 )
             }
@@ -242,16 +267,15 @@ fun DashboardScreen(
                             )
                         )
                 )
-                // Scrim oscuro sobre TODO el degradado: garantiza contraste AA del texto blanco
-                // translúcido en todo el ancho, incluido el lado claro (AccentCyan). UX-02.
+                // UX2-02: scrim negro UNIFORME (alpha 0.55) sobre todo el degradado. El gradiente
+                // anterior (0.25→0.40) dejaba la zona superior clara (AccentCyan) por debajo de
+                // 4.5:1 para las etiquetas translúcidas. Con este tratamiento, el texto blanco
+                // pleno y las etiquetas al 85% quedan por encima de 4.5:1 incluso sobre el
+                // extremo más claro del degradado.
                 Box(
                     modifier = Modifier
                         .matchParentSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Black.copy(alpha = 0.25f), Color.Black.copy(alpha = 0.40f))
-                            )
-                        )
+                        .background(Color.Black.copy(alpha = 0.55f))
                 )
                 Box(
                     modifier = Modifier
@@ -264,7 +288,8 @@ fun DashboardScreen(
                         Text(
                             text = "BALANCE DISPONIBLE",
                             style = MaterialTheme.typography.labelMedium.copy(
-                                color = Color.White.copy(alpha = 0.75f),
+                                // UX2-02: alpha >= 0.85 para mantener contraste sobre el degradado.
+                                color = Color.White.copy(alpha = 0.85f),
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 1.2.sp
                             )
@@ -293,7 +318,8 @@ fun DashboardScreen(
                                 Text(
                                     text = "Portafolio (USD)",
                                     style = MaterialTheme.typography.labelSmall.copy(
-                                        color = Color.White.copy(alpha = 0.65f),
+                                        // UX2-02: alpha >= 0.85 para mantener contraste sobre el degradado.
+                                        color = Color.White.copy(alpha = 0.85f),
                                         fontWeight = FontWeight.Bold,
                                         letterSpacing = 0.5.sp
                                     )
@@ -318,10 +344,12 @@ fun DashboardScreen(
                             } else {
                                 "Sin comparación previa"
                             }
+                            // UX2-02: fondo sólido oscuro (en vez de blanco translúcido) para que
+                            // el texto blanco 100% de la cápsula conserve contraste suficiente.
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(50))
-                                    .background(Color.White.copy(alpha = 0.2f))
+                                    .background(Color.Black.copy(alpha = 0.45f))
                                     .padding(horizontal = 12.dp, vertical = 6.dp)
                             ) {
                                 Text(
@@ -356,10 +384,12 @@ fun DashboardScreen(
                         // Estado financiero (no expone montos).
                         val health = dashboardData.health
                         val healthColor = when (health) {
-                            FinancialHealth.EXCELENTE -> ExcelGreen
-                            FinancialHealth.BUENO -> ExcelMediumBlue
-                            FinancialHealth.AJUSTADO -> LocalFinanceColors.current.warning
-                            FinancialHealth.CRITICO -> ExcelRed
+                            FinancialHealth.EXCELENTE -> finance.success
+                            FinancialHealth.BUENO -> MaterialTheme.colorScheme.primary
+                            FinancialHealth.AJUSTADO -> finance.warning
+                            FinancialHealth.CRITICO -> finance.negative
+                            // FIN2-10: mes sin datos — estado NEUTRO, no es una advertencia.
+                            FinancialHealth.SIN_DATOS -> MaterialTheme.colorScheme.onSurfaceVariant
                         }
                         StatusPill(text = health.label, color = healthColor)
                     }
@@ -376,7 +406,7 @@ fun DashboardScreen(
                             label = "Tasa de ahorro",
                             // El porcentaje no revela montos exactos: siempre visible.
                             value = FormatUtils.formatPercentage(dashboardData.savingsRate),
-                            valueColor = if (dashboardData.savingsRate >= 0) ExcelGreen else ExcelRed,
+                            valueColor = if (dashboardData.savingsRate >= 0) finance.success else finance.negative,
                             sensitive = false
                         )
                         MetricCell(
@@ -426,8 +456,8 @@ fun DashboardScreen(
                                 ?: "Sin comparación",
                             valueColor = when {
                                 incChange == null -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                incChange >= 0 -> ExcelGreen
-                                else -> ExcelRed
+                                incChange >= 0 -> finance.success
+                                else -> finance.negative
                             },
                             sensitive = false
                         )
@@ -438,8 +468,8 @@ fun DashboardScreen(
                                 ?: "Sin comparación",
                             valueColor = when {
                                 expChange == null -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                expChange <= 0 -> ExcelGreen
-                                else -> ExcelRed
+                                expChange <= 0 -> finance.success
+                                else -> finance.negative
                             },
                             sensitive = false
                         )
@@ -464,7 +494,12 @@ fun DashboardScreen(
                     ) {
                         Button(
                             onClick = { dialogType = "INCOME"; showAddDialog = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = ExcelGreen),
+                            // UX2-01: contentColor explícito — onPrimary heredado no garantiza
+                            // contraste sobre el contenedor semántico en tema claro.
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = finance.success,
+                                contentColor = Color.White,
+                            ),
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("quick_add_income"),
@@ -477,7 +512,10 @@ fun DashboardScreen(
                         }
                         Button(
                             onClick = { dialogType = "EXPENSE"; showAddDialog = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = ExcelRed),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = finance.negative,
+                                contentColor = Color.White,
+                            ),
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("quick_add_expense"),
@@ -490,7 +528,10 @@ fun DashboardScreen(
                         }
                         Button(
                             onClick = { showAddStockDialog = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = ExcelMediumBlue),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = Color.White,
+                            ),
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("quick_add_stock"),
@@ -569,14 +610,14 @@ fun DashboardScreen(
 
                                 // Income bar
                                 drawRect(
-                                    color = ExcelGreen,
+                                    color = finance.success,
                                     topLeft = Offset(baseX - barWidth - spacingBetweenBars, canvasHeight - 25.dp.toPx() - incomeHeight.toFloat()),
                                     size = Size(barWidth, incomeHeight.toFloat())
                                 )
 
                                 // Expense bar
                                 drawRect(
-                                    color = ExcelRed,
+                                    color = finance.negative,
                                     topLeft = Offset(baseX + spacingBetweenBars, canvasHeight - 25.dp.toPx() - expenseHeight.toFloat()),
                                     size = Size(barWidth, expenseHeight.toFloat())
                                 )
@@ -609,7 +650,7 @@ fun DashboardScreen(
                             Icon(
                                 Icons.Default.ArrowUpward,
                                 contentDescription = null,
-                                tint = ExcelGreen,
+                                tint = finance.success,
                                 modifier = Modifier.size(12.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
@@ -618,7 +659,7 @@ fun DashboardScreen(
                             Icon(
                                 Icons.Default.ArrowDownward,
                                 contentDescription = null,
-                                tint = ExcelRed,
+                                tint = finance.negative,
                                 modifier = Modifier.size(12.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
@@ -811,7 +852,10 @@ fun DashboardScreen(
                         if (isPinSet) reauthAction = { viewModel.resetToSeedData() }
                         else viewModel.resetToSeedData()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = ExcelDarkBlue)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = Color.White,
+                    )
                 ) { Text("Restaurar", fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
@@ -828,12 +872,14 @@ fun DashboardScreen(
             confirmText = "Confirmar",
             onDismiss = { reauthAction = null },
             onConfirm = { pin, onError ->
-                securityViewModel.verifyPin(pin) { ok ->
+                // SEC: verifyPin ahora recibe CharArray y devuelve el mensaje real del intento
+                // (incluye lockout "Demasiados intentos..."); se muestra en vez de un genérico.
+                securityViewModel.verifyPin(pin.toCharArray()) { ok, error ->
                     if (ok) {
                         reauthAction = null
                         action()
                     } else {
-                        onError("PIN incorrecto.")
+                        onError(error ?: "PIN incorrecto.")
                     }
                 }
             }
@@ -908,6 +954,8 @@ private fun DashboardEmptyState(
     onAddStock: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // UX2-01: tokens del tema en vez de alias estáticos Excel*.
+    val finance = LocalFinanceColors.current
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -951,7 +999,11 @@ private fun DashboardEmptyState(
         ) {
             Button(
                 onClick = onAddIncome,
-                colors = ButtonDefaults.buttonColors(containerColor = ExcelGreen),
+                // UX2-01: contentColor explícito para asegurar contraste en tema claro.
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = finance.success,
+                    contentColor = Color.White,
+                ),
                 modifier = Modifier.weight(1f).testTag("empty_add_income"),
                 shape = RoundedCornerShape(12.dp),
                 contentPadding = PaddingValues(vertical = 12.dp),
@@ -962,7 +1014,10 @@ private fun DashboardEmptyState(
             }
             Button(
                 onClick = onAddExpense,
-                colors = ButtonDefaults.buttonColors(containerColor = ExcelRed),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = finance.negative,
+                    contentColor = Color.White,
+                ),
                 modifier = Modifier.weight(1f).testTag("empty_add_expense"),
                 shape = RoundedCornerShape(12.dp),
                 contentPadding = PaddingValues(vertical = 12.dp),
@@ -973,7 +1028,10 @@ private fun DashboardEmptyState(
             }
             Button(
                 onClick = onAddStock,
-                colors = ButtonDefaults.buttonColors(containerColor = ExcelMediumBlue),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = Color.White,
+                ),
                 modifier = Modifier.weight(1f).testTag("empty_add_stock"),
                 shape = RoundedCornerShape(12.dp),
                 contentPadding = PaddingValues(vertical = 12.dp),
@@ -1043,18 +1101,21 @@ fun AddTransactionDialog(
     onDismiss: () -> Unit,
     onSave: (date: String, category: String, desc: String, amount: Double) -> Unit
 ) {
-    var amountStr by remember { mutableStateOf("") }
-    var descStr by remember { mutableStateOf("") }
+    // UX2-01: tokens del tema en vez de alias estáticos Excel*.
+    val finance = LocalFinanceColors.current
+    // UX2-09: campos del formulario sobreviven a muerte de proceso / rotación.
+    var amountStr by rememberSaveable { mutableStateOf("") }
+    var descStr by rememberSaveable { mutableStateOf("") }
 
-    // Date Picker Management
+    // Date Picker Management. UX2-03/FIN2-01: arranca en la fecha de hoy (antes se forzaba
+    // una fecha fija 2026-05-29 que sembraba movimientos en el mes equivocado).
     val calendar = Calendar.getInstance()
-    // Pre-seed year 2026 month May (base indices 0-11: May is 4)
-    calendar[Calendar.YEAR] = 2026
-    calendar[Calendar.MONTH] = Calendar.MAY
-    calendar[Calendar.DAY_OF_MONTH] = 29
 
-    val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-    var dateStr by remember { mutableStateOf(sdf.format(calendar.time)) }
+    // FIN2-11: Locale.US fijo — es el formato INTERNO de persistencia. Con getDefault(), en
+    // locales con dígitos no latinos (p. ej. árabe) se emitían dígitos localizados que rompían
+    // el ORDER BY date.
+    val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    var dateStr by rememberSaveable { mutableStateOf(sdf.format(calendar.time)) }
 
     val context = LocalContext.current
     val datePickerDialog = DatePickerDialog(
@@ -1072,12 +1133,12 @@ fun AddTransactionDialog(
         calendar[Calendar.DAY_OF_MONTH]
     )
 
-    // Category Selected
-    var selectedCategoryName by remember { mutableStateOf(categories.firstOrNull()?.name ?: "") }
+    // Category Selected (UX2-09: saveable; el dropdown abierto es estado transitorio).
+    var selectedCategoryName by rememberSaveable { mutableStateOf(categories.firstOrNull()?.name ?: "") }
     var expandedCategoryDropdown by remember { mutableStateOf(false) }
 
-    // Validation fields
-    var errorMsg by remember { mutableStateOf("") }
+    // Validation fields (UX2-09)
+    var errorMsg by rememberSaveable { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1085,7 +1146,7 @@ fun AddTransactionDialog(
             Text(
                 if (type == "INCOME") "Agregar Ingreso" else "Agregar Gasto",
                 fontWeight = FontWeight.Bold,
-                color = if (type == "INCOME") ExcelGreen else ExcelRed
+                color = if (type == "INCOME") finance.success else finance.negative
             )
         },
         text = {
@@ -1105,14 +1166,20 @@ fun AddTransactionDialog(
                     Text(
                         "No tienes categorías de este tipo todavía. Crea una en Ajustes → Categorías para poder registrar el movimiento.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = ExcelRed,
+                        color = finance.negative,
                         fontWeight = FontWeight.Medium
                     )
                 }
 
-                if (errorMsg.isNotEmpty()) {
-                    Text(errorMsg, color = ExcelRed, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                }
+                // UX2-08: el error se compone SIEMPRE (no condicional) y se marca como región
+                // viva para que TalkBack anuncie el mensaje cuando cambia.
+                Text(
+                    text = errorMsg,
+                    color = finance.negative,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                )
 
                 // Date Picker trigger button
                 OutlinedButton(
@@ -1181,7 +1248,9 @@ fun AddTransactionDialog(
             Button(
                 onClick = {
                     val amt = amountStr.toDoubleOrNull()
-                    if (amt == null || amt <= 0.0) {
+                    // FIN2-02: rechaza también NaN/Infinity ("NaN" <= 0.0 es false y "9e999"
+                    // parsea como Infinity; ambos se persistían y corrompían los totales).
+                    if (amt == null || !amt.isFinite() || amt <= 0.0) {
                         errorMsg = "El monto debe ser un número entero mayor a 0."
                         return@Button
                     }
@@ -1191,7 +1260,10 @@ fun AddTransactionDialog(
                     }
                     onSave(dateStr, selectedCategoryName, descStr.ifEmpty { "Movimiento" }, amt)
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = if (type == "INCOME") ExcelGreen else ExcelRed),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (type == "INCOME") finance.success else finance.negative,
+                    contentColor = Color.White,
+                ),
                 modifier = Modifier.testTag("submit_transaction_button")
             ) {
                 Text("Guardar", fontWeight = FontWeight.Bold)
@@ -1211,13 +1283,16 @@ fun AddStockDialog(
     onDismiss: () -> Unit,
     onSave: (ticker: String, name: String, qty: Double, buyPrice: Double, currentPrice: Double) -> Unit
 ) {
-    var ticker by remember { mutableStateOf("") }
-    var companyName by remember { mutableStateOf("") }
-    var quantityStr by remember { mutableStateOf("") }
-    var purchasePriceStr by remember { mutableStateOf("") }
-    var currentPriceStr by remember { mutableStateOf("") }
+    // UX2-01: tokens del tema en vez de alias estáticos Excel*.
+    val finance = LocalFinanceColors.current
+    // UX2-09: campos del formulario sobreviven a muerte de proceso / rotación.
+    var ticker by rememberSaveable { mutableStateOf("") }
+    var companyName by rememberSaveable { mutableStateOf("") }
+    var quantityStr by rememberSaveable { mutableStateOf("") }
+    var purchasePriceStr by rememberSaveable { mutableStateOf("") }
+    var currentPriceStr by rememberSaveable { mutableStateOf("") }
 
-    var errorMsg by remember { mutableStateOf("") }
+    var errorMsg by rememberSaveable { mutableStateOf("") }
 
     // Buscador de activos (Finnhub /search). Degrada a entrada manual si no hay API key.
     val searchState by viewModel.symbolSearchState.collectAsState()
@@ -1228,7 +1303,7 @@ fun AddStockDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text("Agregar Activo / Acción", fontWeight = FontWeight.Bold, color = ExcelMediumBlue)
+            Text("Agregar Activo / Acción", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         },
         text = {
             Column(
@@ -1241,9 +1316,15 @@ fun AddStockDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                if (errorMsg.isNotEmpty()) {
-                    Text(errorMsg, color = ExcelRed, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                }
+                // UX2-08: el error se compone SIEMPRE (no condicional) y se marca como región
+                // viva para que TalkBack anuncie el mensaje cuando cambia.
+                Text(
+                    text = errorMsg,
+                    color = finance.negative,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                )
 
                 // --- Buscador de activos: encuentra cualquier símbolo por nombre o ticker ---
                 OutlinedTextField(
@@ -1262,7 +1343,7 @@ fun AddStockDialog(
                 when (val s = searchState) {
                     is SymbolSearchState.NeedsApiKey -> Text(
                         "Configura una API key para buscar. Puedes ingresar el ticker manualmente.",
-                        color = ExcelMediumBlue,
+                        color = MaterialTheme.colorScheme.primary,
                         style = MaterialTheme.typography.bodySmall
                     )
                     is SymbolSearchState.Empty -> Text(
@@ -1370,22 +1451,27 @@ fun AddStockDialog(
                         errorMsg = "La empresa es obligatoria."
                         return@Button
                     }
-                    if (qty == null || qty <= 0.0) {
+                    // FIN2-02: rechaza también NaN/Infinity ("NaN" <= 0.0 es false y "9e999"
+                    // parsea como Infinity; ambos se persistían y corrompían los totales).
+                    if (qty == null || !qty.isFinite() || qty <= 0.0) {
                         errorMsg = "Cantidad debe ser un número positivo."
                         return@Button
                     }
-                    if (bPrice == null || bPrice <= 0.0) {
+                    if (bPrice == null || !bPrice.isFinite() || bPrice <= 0.0) {
                         errorMsg = "El precio de compra debe ser mayor a 0."
                         return@Button
                     }
-                    if (cPrice == null || cPrice <= 0.0) {
+                    if (cPrice == null || !cPrice.isFinite() || cPrice <= 0.0) {
                         errorMsg = "El precio actual debe ser mayor a 0."
                         return@Button
                     }
 
                     onSave(ticker, companyName, qty, bPrice, cPrice)
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = ExcelMediumBlue),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = Color.White,
+                ),
                 modifier = Modifier.testTag("submit_stock_button")
             ) {
                 Text("Invertir", fontWeight = FontWeight.Bold)

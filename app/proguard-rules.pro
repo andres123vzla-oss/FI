@@ -24,8 +24,9 @@
 # Reglas para R8 (release con isMinifyEnabled = true)
 # ============================================================================
 
-# BuildConfig: MarketDataProvider lee MARKET_API_KEY por reflexión (Class.forName).
--keep class com.example.BuildConfig { *; }
+# BLD2-01: eliminada la keep rule de BuildConfig. MarketDataProvider ahora accede al campo
+# MARKET_API_KEY de forma directa (sin reflexión), así que R8 puede inlinear/ofuscar la clase
+# y la key deja de quedar etiquetada con su nombre de campo en el APK release.
 
 # SQLCipher: usa JNI; sus clases nativas no deben renombrarse ni eliminarse.
 -keep class net.zetetic.** { *; }

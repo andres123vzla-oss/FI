@@ -28,13 +28,30 @@ import com.example.domain.FinancialHealth
 import com.example.domain.FinancialHealthAnalyzer
 import com.example.domain.InvestmentCalculator
 import com.example.domain.PortfolioMetrics
+import com.example.domain.QuarterlyAverageCalculator
 import com.example.util.FinanceCalculator
+import java.text.DecimalFormat
+import java.text.DecimalFormatSymbols
 import java.util.Calendar
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
-class FinanceViewModel(application: Application) : AndroidViewModel(application) {
+/**
+ * FIN2-04: fecha "de hoy" como dato inyectable (sin java.time: minSdk 24 sin desugaring).
+ * Permite testear daysElapsed/proyección de forma determinista y refrescar el cálculo al
+ * cruzar la medianoche vía [FinanceViewModel.refreshDateTick].
+ */
+data class Today(val year: Int, val month: Int, val day: Int)
+
+class FinanceViewModel(
+    application: Application,
+    /** FIN2-04: proveedor de fecha inyectable (default: calendario del dispositivo). */
+    private val todayProvider: () -> Today = { systemToday() },
+) : AndroidViewModel(application) {
 
     private val database = AppDatabase.getDatabase(application)
     private val repository = FinanceRepository(database.financeDao())
@@ -104,9 +121,23 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             is PriceResult.Failure -> null
         }
 
+    /**
+     * FIN2-04: tick de fecha observable. Quinto flow del dashboard para que el cálculo de
+     * daysElapsed/proyección se invalide al cambiar el día (la UI lo refresca en ON_RESUME).
+     */
+    private val dateTick = MutableStateFlow(todayProvider())
+
+    /** Refresca la fecha "de hoy" (llamar en ON_RESUME). Barato e idempotente. */
+    fun refreshDateTick() {
+        val t = todayProvider()
+        if (t != dateTick.value) dateTick.value = t
+    }
+
     // App state: Selected Month and Year for Dashboard & Budget
-    val selectedMonth = MutableStateFlow(5) // Default to May 2026 as per specification
-    val selectedYear = MutableStateFlow(2026)
+    // FIN2-01: por defecto el MES ACTUAL (antes 5/2026 hardcodeado del seed: la app abría
+    // siempre sobre un mes cerrado y la lógica de mes-en-curso casi nunca se ejecutaba).
+    val selectedMonth = MutableStateFlow(dateTick.value.month)
+    val selectedYear = MutableStateFlow(dateTick.value.year)
 
     // Budget Screen: "Modo promedio trimestral" toggle
     val quarterlyAverageMode = MutableStateFlow(false)
@@ -114,8 +145,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     // Movimientos list filters
     val filterType = MutableStateFlow("ALL") // "ALL", "INCOME", "EXPENSE"
     val filterCategory = MutableStateFlow("ALL")
-    val filterMonth = MutableStateFlow(5) // Default to May to match initial seeding filters
-    val filterYear = MutableStateFlow(2026)
+    val filterMonth = MutableStateFlow(dateTick.value.month) // FIN2-01: mes actual por defecto
+    val filterYear = MutableStateFlow(dateTick.value.year)
     val searchQuery = MutableStateFlow("")
 
     // Raw Room flows
@@ -136,12 +167,16 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     // desde Ajustes / Dashboard. Una base vacía NUNCA dispara siembra automática.
 
     // --- Computed flows for custom months ---
+    // FIN2-04: dateTick como quinto flow para que daysElapsed/proyección se invaliden al
+    // cambiar el día con la app abierta (antes el reloj se leía dentro del combine y quedaba
+    // congelado hasta la siguiente emisión de Room).
     val dashboardSummary: StateFlow<DashboardDetails> = combine(
         allTransactions,
         allInvestments,
         selectedMonth,
-        selectedYear
-    ) { txList, stockList, month, year ->
+        selectedYear,
+        dateTick
+    ) { txList, stockList, month, year, today ->
         // Format month-year strings in transaction: "YYYY-MM-DD" -> parse year and month
         val filteredTx = txList.filter { tx ->
             val dateParts = tx.date.split("-")
@@ -152,16 +187,19 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             } else false
         }
 
-        val totalIncome = filteredTx.filter { it.type == "INCOME" }.sumOf { it.amount }
-        val totalExpense = filteredTx.filter { it.type == "EXPENSE" }.sumOf { it.amount }
+        // FIN2-02: agregación con suma protegida (ignora NaN/Infinity). Un solo movimiento
+        // corrupto convertía el total del mes en Infinity, que FormatUtils mostraba como "CLP 0".
+        val totalIncome = FinanceCalculator.sum(filteredTx.filter { it.type == "INCOME" }.map { it.amount })
+        val totalExpense = FinanceCalculator.sum(filteredTx.filter { it.type == "EXPENSE" }.map { it.amount })
         val balance = FinanceCalculator.balance(totalIncome, totalExpense)
 
-        val portfolioCurrentValue = stockList.sumOf { it.quantity * it.currentPrice }
+        val portfolioCurrentValue = FinanceCalculator.sum(stockList.map { it.quantity * it.currentPrice })
 
-        // Monthly overview list for Chart & comparison: let's build 6 months up to selectedMonth
+        // FIN2-08: ventana de comparativa = 4 meses históricos + el mes seleccionado (5 barras).
+        // Antes era -3..1: incluía el MES SIGUIENTE (casi siempre en 0), dibujando una caída
+        // ficticia al final del gráfico de barras del dashboard.
         val monthlySummaryList = mutableListOf<MonthlySummary>()
-        // Calculate figures for past 4 months + selected month & next month to show a trend list
-        for (mOffset in -3..1) {
+        for (mOffset in -4..0) {
             var targetM = month + mOffset
             var targetY = year
             if (targetM <= 0) {
@@ -180,8 +218,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     txYear == targetY && txMonth == targetM
                 } else false
             }
-            val incSum = curFiltered.filter { it.type == "INCOME" }.sumOf { it.amount }
-            val expSum = curFiltered.filter { it.type == "EXPENSE" }.sumOf { it.amount }
+            val incSum = FinanceCalculator.sum(curFiltered.filter { it.type == "INCOME" }.map { it.amount })
+            val expSum = FinanceCalculator.sum(curFiltered.filter { it.type == "EXPENSE" }.map { it.amount })
             monthlySummaryList.add(
                 MonthlySummary(
                     month = targetM,
@@ -196,7 +234,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         // Sector distribution by category spent
         val spentByCategory = filteredTx.filter { it.type == "EXPENSE" }
             .groupBy { it.categoryName }
-            .mapValues { entry -> entry.value.sumOf { it.amount } }
+            .mapValues { entry -> FinanceCalculator.sum(entry.value.map { it.amount }) }
 
         val categorySpentList = spentByCategory.map { (catName, sumAmount) ->
             val percentage = FinanceCalculator.ratio(sumAmount, totalExpense)
@@ -216,9 +254,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         // - Mes histórico cerrado: usar el mes completo y NO proyectar (la "proyección a fin de
         //   mes" no tiene sentido en un mes ya terminado).
         val daysInMonth = daysInMonth(month, year)
-        val esMesEnCurso = month == currentMonth() && year == currentYear()
+        // FIN2-04: "hoy" viene del dateTick observable (testeable e invalidable), no del reloj
+        // leído inline.
+        val esMesEnCurso = month == today.month && year == today.year
         val daysElapsed = if (esMesEnCurso) {
-            currentDayOfMonth().coerceIn(1, daysInMonth)
+            today.day.coerceIn(1, daysInMonth)
         } else {
             daysInMonth
         }
@@ -232,7 +272,13 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             totalExpense
         }
         val topCategory = CategorySpendingAnalyzer.topCategory(spentByCategory)
-        val health = FinancialHealthAnalyzer.evaluate(savingsRate, balance)
+        // FIN2-10: un mes sin ningún dato es "Sin datos" (neutro), no "Ajustado" (warning).
+        // La señal es income/expense (NO balance==0, que enmascararía income == expense).
+        val health = FinancialHealthAnalyzer.evaluate(
+            savingsRate,
+            balance,
+            hasData = totalIncome != 0.0 || totalExpense != 0.0,
+        )
 
         DashboardDetails(
             incomeTotal = totalIncome,
@@ -272,6 +318,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         val fy = flowsArray[4] as Int
         val search = flowsArray[5] as String
 
+        // FIN2-05: representación PLANA del monto para la búsqueda. Double.toString emite
+        // notación científica desde 1e7 ("1.2E7"), por lo que buscar "12000000" no encontraba
+        // montos de 8 dígitos (plausibles en CLP). Se crea una vez por emisión (DecimalFormat
+        // no es thread-safe, no debe ser field compartido) con símbolos fijos en-US.
+        val plainFmt = DecimalFormat("#.##", DecimalFormatSymbols(Locale.US))
+
         txList.filter { tx ->
             // Date parsing
             val dateParts = tx.date.split("-")
@@ -285,7 +337,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             val matchesSearch = search.isEmpty() ||
                     tx.description.contains(search, ignoreCase = true) ||
                     tx.categoryName.contains(search, ignoreCase = true) ||
-                    tx.amount.toString().contains(search)
+                    plainFmt.format(tx.amount).contains(search) ||
+                    // También matchea lo que el usuario ve en pantalla ("12.000.000").
+                    com.example.util.FormatUtils.formatCLP(tx.amount).contains(search)
 
             matchesType && matchesCategory && matchesMonth && matchesYear && matchesSearch
         }
@@ -301,7 +355,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         allCategories,
         selectedMonth,
         selectedYear,
-        quarterlyAverageMode
+        quarterlyAverageMode,
+        dateTick
     ) { flowsArray ->
         val budgets = flowsArray[0] as List<BudgetEntity>
         val transactions = flowsArray[1] as List<TransactionEntity>
@@ -309,6 +364,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         val sMonth = flowsArray[3] as Int
         val sYear = flowsArray[4] as Int
         val isAvgMode = flowsArray[5] as Boolean
+        val today = flowsArray[6] as Today
 
         // Solo categorías de gasto REALES del usuario + las que ya tienen un presupuesto guardado.
         // Sin categorías de referencia hardcodeadas: con la BD vacía, la lista queda vacía y la
@@ -324,8 +380,15 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
             // 2. Get spent amount
             val spentAmount = if (isAvgMode) {
-                // Average of last 3 months spent in this category
-                val threeMonthsRange = List(3) { i ->
+                // FIN2-03: si el mes seleccionado es el MES EN CURSO (parcial), la ventana son
+                // los 3 meses CERRADOS anteriores (i=1..3); contarlo como mes completo sesgaba
+                // el promedio a la baja (~22% en el ejemplo de la auditoría). Para meses
+                // históricos se mantiene la ventana i=0..2 (el mes seleccionado y 2 previos).
+                // Efecto documentado: una categoría con gasto SOLO en el mes en curso muestra
+                // promedio 0 en este modo (el modo normal sí lo refleja).
+                val esMesEnCurso = sMonth == today.month && sYear == today.year
+                val offsets = if (esMesEnCurso) 1..3 else 0..2
+                val threeMonthsRange = offsets.map { i ->
                     var m = sMonth - i
                     var y = sYear
                     if (m <= 0) {
@@ -334,42 +397,28 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     }
                     m to y
                 }
-                // CALC-03: derivar numerador y denominador del MISMO conjunto filtrado para que no
-                // diverjan. El promedio se divide por los MESES CON DATOS reales (no siempre 3): una
-                // categoría con gasto en solo 1 de los últimos 3 meses se promedia sobre 1, no sobre 3,
-                // evitando subestimar el gasto real ~3x. coerceAtLeast(1) impide división por cero.
-                val txsEnRango = transactions.filter { tx ->
-                    if (tx.type == "EXPENSE" && tx.categoryName == category) {
-                        val parts = tx.date.split("-")
-                        if (parts.size >= 2) {
-                            val txYear = parts[0].toIntOrNull() ?: 0
-                            val txMonth = parts[1].toIntOrNull() ?: 0
-                            threeMonthsRange.contains(txMonth to txYear)
-                        } else false
-                    } else false
-                }
-                val totalSpent3M = txsEnRango.sumOf { it.amount }
-                val mesesConDatos = txsEnRango.mapNotNull { tx ->
-                    val p = tx.date.split("-")
-                    if (p.size >= 2) {
-                        val m = p[1].toIntOrNull()
-                        val y = p[0].toIntOrNull()
-                        if (m != null && y != null) m to y else null
-                    } else null
-                }.distinct().size.coerceAtLeast(1)
-                totalSpent3M / mesesConDatos.toDouble()
+                // CALC-03 (extraído a QuarterlyAverageCalculator, FIN2-09): numerador y
+                // denominador derivan del MISMO conjunto; el divisor son los meses CON DATOS.
+                QuarterlyAverageCalculator.average(
+                    txs = transactions
+                        .filter { it.type == "EXPENSE" && it.categoryName == category }
+                        .map { it.date to it.amount },
+                    window = threeMonthsRange,
+                )
             } else {
-                // Real spent amount for the selected month
-                transactions.filter { tx ->
-                    if (tx.type == "EXPENSE" && tx.categoryName == category) {
-                        val parts = tx.date.split("-")
-                        if (parts.size >= 2) {
-                            val txY = parts[0].toIntOrNull() ?: 0
-                            val txM = parts[1].toIntOrNull() ?: 0
-                            txY == sYear && txM == sMonth
+                // Real spent amount for the selected month (FIN2-02: suma protegida).
+                FinanceCalculator.sum(
+                    transactions.filter { tx ->
+                        if (tx.type == "EXPENSE" && tx.categoryName == category) {
+                            val parts = tx.date.split("-")
+                            if (parts.size >= 2) {
+                                val txY = parts[0].toIntOrNull() ?: 0
+                                val txM = parts[1].toIntOrNull() ?: 0
+                                txY == sYear && txM == sMonth
+                            } else false
                         } else false
-                    } else false
-                }.sumOf { it.amount }
+                    }.map { it.amount }
+                )
             }
 
             val difference = budgetedAmount - spentAmount
@@ -391,8 +440,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     // --- Investment stocks summary flow ---
     val investmentSummaryFlow: StateFlow<InvestmentSummary> = allInvestments.map { stocks ->
-        val totalInvested = stocks.sumOf { it.quantity * it.purchasePrice }
-        val totalCurrent = stocks.sumOf { it.quantity * it.currentPrice }
+        // FIN2-02: sumas protegidas (un producto no-finito se ignora, no contamina el total).
+        val totalInvested = FinanceCalculator.sum(stocks.map { it.quantity * it.purchasePrice })
+        val totalCurrent = FinanceCalculator.sum(stocks.map { it.quantity * it.currentPrice })
         val gainLoss = FinanceCalculator.gainLoss(totalCurrent, totalInvested)
         val yieldPercent = FinanceCalculator.yieldPercent(gainLoss, totalInvested)
 
@@ -414,6 +464,24 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     val lastPriceUpdate: StateFlow<Long?> = allInvestments
         .map { stocks -> stocks.maxOfOrNull { it.updatedAt } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /**
+     * UX2-12: años con movimientos para los chips de filtro (derivados de la lista COMPLETA,
+     * nunca de la filtrada — sería circular). Incluye siempre el año del filtro activo (para que
+     * el chip seleccionado no desaparezca) y el año actual como fallback con lista vacía.
+     */
+    val availableYears: StateFlow<List<Int>> = combine(
+        allTransactions,
+        filterYear,
+        dateTick,
+    ) { txs, fy, today ->
+        val years = txs.mapNotNull { it.date.split("-").getOrNull(0)?.toIntOrNull() }
+            .toMutableSet()
+        if (years.isEmpty()) years.add(today.year)
+        if (fy != 0) years.add(fy)
+        years.sortedDescending()
+    }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // --- Análisis de presupuesto derivado del reporte por categoría ---
     private fun budgetLines(items: List<BudgetReportItem>): List<BudgetLine> =
@@ -444,7 +512,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 tx.type == "EXPENSE" && txYear == year && txMonth == month
             }
             .groupBy { it.categoryName }
-            .mapValues { entry -> entry.value.sumOf { it.amount } }
+            .mapValues { entry -> FinanceCalculator.sum(entry.value.map { it.amount }) }
         val budgetByCategory = budgets
             .filter { it.month == month && it.year == year }
             .associate { it.categoryName to it.plannedAmount }
@@ -469,7 +537,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 tx.type == "EXPENSE" && txYear == year && txMonth == month
             }
             .groupBy { it.categoryName }
-            .mapValues { entry -> entry.value.sumOf { it.amount } }
+            .mapValues { entry -> FinanceCalculator.sum(entry.value.map { it.amount }) }
         val budgetByCategory = budgets
             .filter { it.month == month && it.year == year }
             .associate { it.categoryName to it.plannedAmount }
@@ -497,6 +565,13 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
      */
     fun autoRefreshPrices() = refreshPricesInternal(auto = true)
 
+    /**
+     * ARQ2-04: serializa los ciclos de refresco. Con 8 activos offline un ciclo puede superar
+     * los 60 s del poller, solapándose con el siguiente (tráfico duplicado, escrituras
+     * intercaladas). El manual espera al ciclo en curso (withLock) en vez de fallar en silencio.
+     */
+    private val refreshMutex = Mutex()
+
     private fun refreshPricesInternal(auto: Boolean) {
         if (!marketRepo.canRefresh) {
             if (!auto) {
@@ -508,6 +583,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
         viewModelScope.launch {
             if (!auto) priceUpdateState.value = PriceUpdateState.Loading
+            refreshMutex.withLock {
             val stocks = repository.allInvestments.first()
             if (stocks.isEmpty()) {
                 if (!auto) priceUpdateState.value = PriceUpdateState.Error("No hay activos en el portafolio.")
@@ -522,11 +598,13 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             for (stock in stocks) {
                 when (val result = marketRepo.fetchPrice(stock.ticker)) {
                     is PriceResult.Success -> {
-                        repository.updateInvestment(
-                            stock.copy(
-                                currentPrice = result.price,
-                                updatedAt = System.currentTimeMillis()
-                            )
+                        // ARQ2-04: UPDATE parcial (solo currentPrice/updatedAt). El @Update de
+                        // fila completa sobre el snapshot revertía ediciones de cantidad/precio
+                        // de compra hechas por el usuario durante el ciclo de red (lost update).
+                        repository.updateInvestmentPrice(
+                            id = stock.id,
+                            price = result.price,
+                            now = System.currentTimeMillis(),
                         )
                         updated++
                     }
@@ -552,6 +630,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
             }
+            } // refreshMutex.withLock
         }
     }
 
@@ -579,16 +658,21 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun updateTransaction(id: Int, type: String, date: String, categoryName: String, description: String, amount: Double) {
+    /**
+     * ARQ2-03: recibe la entidad ORIGINAL y aplica `copy` para preservar `createdAt` (antes se
+     * construía una entidad nueva y cada edición re-sellaba createdAt con la hora de la edición,
+     * rompiendo el orden del listado y la semántica de auditoría del campo).
+     */
+    fun updateTransaction(original: TransactionEntity, type: String, date: String, categoryName: String, description: String, amount: Double) {
         viewModelScope.launch {
             repository.updateTransaction(
-                TransactionEntity(
-                    id = id,
+                original.copy(
                     type = type,
                     date = date,
                     categoryName = categoryName,
                     description = description,
-                    amount = amount
+                    amount = amount,
+                    updatedAt = System.currentTimeMillis(),
                 )
             )
         }
@@ -600,22 +684,67 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun addCategory(name: String, type: String, colorHex: String, iconName: String) {
+    /**
+     * ARQ2-05: el insert usa ABORT sobre el índice único (name, type); un duplicado ya no
+     * machaca la categoría existente ni crashea — se reporta por [onResult].
+     */
+    fun addCategory(name: String, type: String, colorHex: String, iconName: String, onResult: (error: String?) -> Unit = {}) {
         viewModelScope.launch {
-            repository.insertCategory(
-                CategoryEntity(
-                    name = name,
-                    type = type,
-                    colorHex = colorHex,
-                    iconName = iconName
+            val trimmed = name.trim()
+            if (trimmed.isEmpty()) {
+                onResult("El nombre no puede estar vacío.")
+                return@launch
+            }
+            // Validación previa amistosa (el índice único es la red de seguridad).
+            val duplicate = allCategories.value.any {
+                it.name.equals(trimmed, ignoreCase = true) && it.type == type
+            }
+            if (duplicate) {
+                onResult("Ya existe una categoría \"$trimmed\" de ese tipo.")
+                return@launch
+            }
+            runCatching {
+                repository.insertCategory(
+                    CategoryEntity(
+                        name = trimmed,
+                        type = type,
+                        colorHex = colorHex,
+                        iconName = iconName
+                    )
                 )
+            }.fold(
+                onSuccess = { onResult(null) },
+                onFailure = { onResult("Ya existe una categoría con ese nombre.") },
             )
         }
     }
 
-    fun updateCategory(category: CategoryEntity) {
+    /**
+     * ARQ2-06: si cambió el nombre, propaga el rename a movimientos y presupuestos en una
+     * transacción (el esquema referencia por nombre, sin FK). Valida colisión con otra categoría
+     * para no fusionar silenciosamente historiales.
+     */
+    fun updateCategory(category: CategoryEntity, oldName: String, onResult: (error: String?) -> Unit = {}) {
         viewModelScope.launch {
-            repository.updateCategory(category)
+            val newName = category.name.trim()
+            if (newName.isEmpty()) {
+                onResult("El nombre no puede estar vacío.")
+                return@launch
+            }
+            if (newName == oldName) {
+                runCatching { repository.updateCategory(category.copy(name = newName)) }
+                    .fold(onSuccess = { onResult(null) }, onFailure = { onResult("No se pudo guardar la categoría.") })
+                return@launch
+            }
+            val collision = allCategories.value.any {
+                it.id != category.id && it.name.equals(newName, ignoreCase = true) && it.type == category.type
+            }
+            if (collision) {
+                onResult("Ya existe otra categoría \"$newName\"; elige un nombre distinto.")
+                return@launch
+            }
+            runCatching { repository.renameCategoryCascade(category.copy(name = newName), oldName) }
+                .fold(onSuccess = { onResult(null) }, onFailure = { onResult("No se pudo renombrar la categoría.") })
         }
     }
 
@@ -624,10 +753,17 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             val txCount = repository.getTransactionCountForCategory(category.name)
             if (txCount > 0) {
                 onResult(false, "No se puede eliminar la categoría porque tiene $txCount movimientos asociados.")
-            } else {
-                repository.deleteCategory(category)
-                onResult(true, "Categoría eliminada con éxito.")
+                return@launch
             }
+            // UX2-04: tampoco se borra una categoría con presupuestos asociados (quedarían
+            // presupuestos huérfanos invisibles que seguirían sumando en los análisis).
+            val budgetCount = repository.getBudgetCountForCategory(category.name)
+            if (budgetCount > 0) {
+                onResult(false, "No se puede eliminar: la categoría tiene $budgetCount presupuesto(s) asociados.")
+                return@launch
+            }
+            repository.deleteCategory(category)
+            onResult(true, "Categoría eliminada con éxito.")
         }
     }
 
@@ -650,13 +786,19 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             // A3 (contrato C1): no insertar un Entity nuevo (id=0); delegar en el repositorio,
             // que FUSIONA la posición si el ticker ya existe (cantidad acumulada + precio de compra
             // promedio ponderado) en vez de duplicar o reemplazar/borrar la posición previa.
-            repository.addOrMergeInvestment(
-                ticker = ticker,
-                companyName = companyName,
-                quantity = quantity,
-                purchasePrice = purchasePrice,
-                currentPrice = currentPrice
-            )
+            // ARQ2-02: la fusión corre en una transacción Room (sin carrera de doble tap);
+            // defensa en profundidad: una SQLiteConstraintException residual no debe crashear.
+            runCatching {
+                repository.addOrMergeInvestment(
+                    ticker = ticker,
+                    companyName = companyName,
+                    quantity = quantity,
+                    purchasePrice = purchasePrice,
+                    currentPrice = currentPrice
+                )
+            }.onFailure {
+                priceUpdateState.value = PriceUpdateState.Error("No se pudo guardar el activo. Intenta de nuevo.")
+            }
         }
     }
 
@@ -675,7 +817,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun resetToSeedData() {
         viewModelScope.launch {
             repository.restoreSeedData()
-            // Reset dates & filters
+            // FIN2-01: se CONSERVA la navegación a 5/2026 a propósito: los datos demo están
+            // fechados en mayo 2026; sin esto el usuario vería pantallas vacías tras restaurar.
             selectedMonth.value = 5
             selectedYear.value = 2026
             filterMonth.value = 5
@@ -689,15 +832,6 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    /** Mes actual (1..12) del calendario del dispositivo. Aislado para legibilidad de CALC-04. */
-    private fun currentMonth(): Int = Calendar.getInstance().get(Calendar.MONTH) + 1
-
-    /** Año actual del calendario del dispositivo. */
-    private fun currentYear(): Int = Calendar.getInstance().get(Calendar.YEAR)
-
-    /** Día del mes actual (1..31) del calendario del dispositivo. */
-    private fun currentDayOfMonth(): Int = Calendar.getInstance().get(Calendar.DAY_OF_MONTH)
-
     /** Días reales del mes (incluye años bisiestos), sin depender del reloj del sistema. */
     private fun daysInMonth(month: Int, year: Int): Int {
         val cal = Calendar.getInstance()
@@ -708,22 +842,33 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     companion object {
+        /** FIN2-04: fecha actual del calendario del dispositivo (default de [todayProvider]). */
+        fun systemToday(): Today {
+            val cal = Calendar.getInstance()
+            return Today(
+                year = cal.get(Calendar.YEAR),
+                month = cal.get(Calendar.MONTH) + 1,
+                day = cal.get(Calendar.DAY_OF_MONTH),
+            )
+        }
+
         /**
          * A5: Factory explícita para construir el [FinanceViewModel]. Centraliza la creación del VM
          * en un único punto (en lugar de depender del default de `viewModel()`), lo que mejora la
-         * testabilidad y deja la puerta abierta a inyectar dependencias en el futuro. Conserva el
-         * comportamiento de runtime actual: sigue siendo un AndroidViewModel que obtiene su
-         * repositorio de [AppDatabase.getDatabase] y el singleton de mercado, sin tocar el flujo de
-         * claves ni la seguridad.
+         * testabilidad y deja la puerta abierta a inyectar dependencias en el futuro (FIN2-04:
+         * acepta un [todayProvider] inyectable). Conserva el comportamiento de runtime actual.
          */
-        fun provideFactory(application: Application): ViewModelProvider.Factory =
+        fun provideFactory(
+            application: Application,
+            todayProvider: () -> Today = { systemToday() },
+        ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
                     require(modelClass.isAssignableFrom(FinanceViewModel::class.java)) {
                         "Factory desconocida para ${modelClass.name}"
                     }
-                    return FinanceViewModel(application) as T
+                    return FinanceViewModel(application, todayProvider) as T
                 }
             }
     }
@@ -770,8 +915,11 @@ data class DashboardDetails(
     /** Categoría con mayor gasto del mes; null si no hay gasto. */
     val topCategoryName: String? = null,
     val topCategoryAmount: Double = 0.0,
-    /** Estado financiero del mes (Excelente/Bueno/Ajustado/Crítico). */
-    val health: FinancialHealth = FinancialHealth.AJUSTADO,
+    /**
+     * Estado financiero del mes. FIN2-10: el default es SIN_DATOS (neutro) para que el pill
+     * de advertencia "Ajustado" no aparezca durante la carga inicial ni en meses vacíos.
+     */
+    val health: FinancialHealth = FinancialHealth.SIN_DATOS,
 )
 
 data class MonthlySummary(

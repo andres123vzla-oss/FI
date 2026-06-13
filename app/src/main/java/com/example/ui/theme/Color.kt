@@ -56,14 +56,12 @@ val LightWarning    = Color(0xFF9A6B00) // Cerca del límite sobre claro
 val LightOnAccent   = Color(0xFFFFFFFF) // Texto/iconos sobre el acento claro
 
 // ============================================================================
-// Compatibilidad: los nombres "Excel*" existentes se conservan pero ahora apuntan
-// al nuevo sistema premium. Así toda la UI que ya los usa adopta el rediseño sin
-// reescribir cada pantalla y sin perder funcionalidad.
+// UX2-01: los alias estáticos Excel* (ExcelGreen/ExcelRed/ExcelMediumBlue/ExcelDarkBlue)
+// fueron ELIMINADOS: apuntaban siempre a la paleta oscura y fallaban WCAG AA en modo
+// claro (1.9–3.2:1 sobre tarjeta blanca). Las pantallas consumen los semánticos vía
+// LocalFinanceColors.current (success/negative/warning/accentCyan) y
+// MaterialTheme.colorScheme (primary/error), que sí cambian por tema.
 // ============================================================================
-val ExcelDarkBlue = AccentBlue   // antes indigo; ahora acento azul eléctrico
-val ExcelGreen = Success         // ingresos / ganancia
-val ExcelRed = Negative          // gastos / pérdida / error
-val ExcelMediumBlue = AccentBlue // gráficos / highlights / portafolio
 
 // Fondos/superficies con nombres heredados. Ahora que existe un tema claro real
 // (UX-01), los alias Light* apuntan a las superficies claras y los Dark* a las

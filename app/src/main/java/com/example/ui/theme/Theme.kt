@@ -78,10 +78,16 @@ private val FinanceLightScheme = lightColorScheme(
     onError = LightOnAccent,
 )
 
-/** Colores semánticos fuera del estándar Material 3 (success / warning / cyan). */
+/**
+ * Colores semánticos fuera del estándar Material 3 (success / negative / warning / cyan).
+ * UX2-01: las pantallas deben consumir SIEMPRE estos tokens vía [LocalFinanceColors] (o
+ * `colorScheme.primary`/`error`), nunca los antiguos alias estáticos `Excel*`, que apuntaban
+ * a la paleta oscura y fallaban WCAG AA en modo claro (1.9–3.2:1 sobre tarjeta blanca).
+ */
 @Immutable
 data class FinanceColors(
     val success: Color = Success,
+    val negative: Color = Negative,
     val warning: Color = Warning,
     val accentCyan: Color = AccentCyan,
 )
@@ -90,11 +96,13 @@ data class FinanceColors(
 // oscurecidos para mantener contraste cuando se pintan sobre superficies claras.
 private val DarkFinanceColors = FinanceColors(
     success = Success,
+    negative = Negative,
     warning = Warning,
     accentCyan = AccentCyan,
 )
 private val LightFinanceColors = FinanceColors(
     success = LightSuccess,
+    negative = LightNegative,
     warning = LightWarning,
     accentCyan = LightAccentCyan,
 )

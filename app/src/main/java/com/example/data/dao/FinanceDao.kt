@@ -33,14 +33,37 @@ interface FinanceDao {
     @Query("SELECT * FROM categories ORDER BY name ASC")
     fun getAllCategories(): Flow<List<CategoryEntity>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    // ARQ2-05: ABORT (no REPLACE) sobre el índice único (name, type): un nombre duplicado lanza
+    // SQLiteConstraintException que el ViewModel captura y traduce a mensaje de error, en vez de
+    // machacar la categoría existente.
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertCategory(category: CategoryEntity): Long
 
+    // Solo para el seed (replaceAllData): corre tras clearAll, sin conflictos posibles.
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCategories(categories: List<CategoryEntity>)
 
     @Update
     suspend fun updateCategory(category: CategoryEntity)
+
+    /**
+     * ARQ2-06: renombrar una categoría propagando el cambio a movimientos y presupuestos en una
+     * sola transacción. El esquema referencia categorías por nombre (sin FK), así que un rename
+     * sin cascada deja huérfanos: movimientos sin icono/filtro y presupuestos divididos.
+     * El caller debe validar antes que [new] no colisione con otra categoría existente.
+     */
+    @Query("UPDATE transactions SET categoryName = :new WHERE categoryName = :old")
+    suspend fun renameTransactionsCategory(old: String, new: String)
+
+    @Query("UPDATE budgets SET categoryName = :new WHERE categoryName = :old")
+    suspend fun renameBudgetsCategory(old: String, new: String)
+
+    @Transaction
+    suspend fun renameCategoryCascade(updated: CategoryEntity, oldName: String) {
+        updateCategory(updated)
+        renameTransactionsCategory(oldName, updated.name)
+        renameBudgetsCategory(oldName, updated.name)
+    }
 
     @Delete
     suspend fun deleteCategory(category: CategoryEntity)
@@ -50,6 +73,11 @@ interface FinanceDao {
 
     @Query("SELECT COUNT(*) FROM transactions WHERE categoryName = :categoryName")
     suspend fun getTransactionCountForCategory(categoryName: String): Int
+
+    // UX2-04: salvaguarda de borrado — una categoría con presupuestos no debe eliminarse
+    // (quedarían presupuestos huérfanos que siguen sumando en los análisis).
+    @Query("SELECT COUNT(*) FROM budgets WHERE categoryName = :categoryName")
+    suspend fun getBudgetCountForCategory(categoryName: String): Int
 
     @Query("DELETE FROM categories")
     suspend fun clearAllCategories()
@@ -97,6 +125,35 @@ interface FinanceDao {
 
     @Update
     suspend fun updateInvestment(investment: InvestmentEntity)
+
+    /**
+     * ARQ2-04: actualización PARCIAL de precio (solo currentPrice/updatedAt). El refresco de
+     * precios trabaja sobre un snapshot que puede quedar estancado durante el ciclo de red; un
+     * @Update de fila completa sobrescribiría quantity/purchasePrice editados por el usuario
+     * mientras tanto (lost update). Sobre una fila borrada afecta 0 filas sin error.
+     */
+    @Query("UPDATE investments SET currentPrice = :price, updatedAt = :now WHERE id = :id")
+    suspend fun updateInvestmentPrice(id: Int, price: Double, now: Long)
+
+    /**
+     * ARQ2-02: fusión/inserción por ticker DENTRO de una transacción. El check-then-act fuera de
+     * transacción permitía que dos llamadas concurrentes (doble tap en "Invertir") vieran ambas
+     * existing == null: la segunda chocaba con el índice único (ABORT) y crasheaba la app, o un
+     * merge concurrente perdía un lote. Room serializa los escritores dentro de @Transaction.
+     * La lógica de fusión (promedio ponderado) vive en el caller vía [merge].
+     */
+    @Transaction
+    suspend fun upsertInvestmentMergingByTicker(
+        candidate: InvestmentEntity,
+        merge: (existing: InvestmentEntity, incoming: InvestmentEntity) -> InvestmentEntity,
+    ) {
+        val existing = getInvestmentByTicker(candidate.ticker)
+        if (existing == null) {
+            insertInvestment(candidate)
+        } else {
+            updateInvestment(merge(existing, candidate))
+        }
+    }
 
     @Query("DELETE FROM investments WHERE id = :id")
     suspend fun deleteInvestmentById(id: Int)

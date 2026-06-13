@@ -64,13 +64,17 @@ object FormatUtils {
     /**
      * Formato CLP compacto: `CLP 1,09M`, `CLP 748,8K`. Para montos pequeños usa el formato CLP
      * completo. Pensado para tarjetas KPI estrechas donde el número no debe partirse.
+     *
+     * FIN2-06: el umbral de la rama M corresponde a la precisión de la rama K (1 decimal):
+     * desde 999.950, `999,96K` redondearía a `1000K`, así que esos valores promueven a `1M`.
+     * 999.949 sigue mostrándose como `999,9K` (más preciso que `1M`).
      */
     fun formatCLPCompact(amount: Double): String {
         val v = sanitize(amount)
         val abs = kotlin.math.abs(v)
         val sign = if (v < 0) "-" else ""
         return when {
-            abs >= 1_000_000.0 -> "CLP $sign${df("0.##", clpCompactSymbols).format(abs / 1_000_000.0)}M"
+            abs >= 999_950.0 -> "CLP $sign${df("0.##", clpCompactSymbols).format(abs / 1_000_000.0)}M"
             abs >= 10_000.0 -> "CLP $sign${df("0.#", clpCompactSymbols).format(abs / 1_000.0)}K"
             else -> formatCLP(v)
         }
@@ -79,13 +83,16 @@ object FormatUtils {
     /**
      * Formato USD compacto: `USD 3.58K`, `USD 1.09M`. Para montos pequeños usa el formato USD
      * completo con dos decimales.
+     *
+     * FIN2-06: umbral de la rama M acorde a los 2 decimales de la rama K (999.995 ⇒ `1000.00K`
+     * promueve a `1.00M`; 999.994 sigue como `999.99K`).
      */
     fun formatUSDCompact(amount: Double): String {
         val v = sanitize(amount)
         val abs = kotlin.math.abs(v)
         val sign = if (v < 0) "-" else ""
         return when {
-            abs >= 1_000_000.0 -> "USD $sign${df("0.00", usdCompactSymbols).format(abs / 1_000_000.0)}M"
+            abs >= 999_995.0 -> "USD $sign${df("0.00", usdCompactSymbols).format(abs / 1_000_000.0)}M"
             abs >= 10_000.0 -> "USD $sign${df("0.00", usdCompactSymbols).format(abs / 1_000.0)}K"
             else -> formatUSD(v)
         }

@@ -32,11 +32,21 @@ object BiometricHelper {
             .canAuthenticate(BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
     }
 
+    /**
+     * Muestra el prompt biométrico.
+     *
+     * SEC2-04: si se provee [cryptoObject], el prompt queda vinculado criptográficamente a la
+     * clave del gate ([BiometricGate]) y [onSuccess] recibe el resultado con el cipher
+     * autenticado; el caller DEBE verificar el token con él antes de desbloquear. Sin
+     * [cryptoObject] el éxito es solo informativo (se usa únicamente en flujos de confirmación
+     * de UI, nunca para conceder el desbloqueo).
+     */
     fun authenticate(
         activity: FragmentActivity,
         title: String = "Desbloquear Mi Panel Financiero",
         subtitle: String = "Usa tu biometría para continuar",
-        onSuccess: () -> Unit,
+        cryptoObject: BiometricPrompt.CryptoObject? = null,
+        onSuccess: (BiometricPrompt.AuthenticationResult) -> Unit,
         onError: (message: String) -> Unit,
         onFallbackToPin: () -> Unit
     ) {
@@ -46,7 +56,7 @@ object BiometricHelper {
             executor,
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    onSuccess()
+                    onSuccess(result)
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
@@ -71,6 +81,10 @@ object BiometricHelper {
             .setConfirmationRequired(false)
             .build()
 
-        prompt.authenticate(info)
+        if (cryptoObject != null) {
+            prompt.authenticate(info, cryptoObject)
+        } else {
+            prompt.authenticate(info)
+        }
     }
 }

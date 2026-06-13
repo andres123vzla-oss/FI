@@ -74,4 +74,15 @@ class FormatUtilsTest {
         assertEquals("CLP 0", FormatUtils.formatCLPCompact(Double.NaN))
         assertEquals("USD 0.00", FormatUtils.formatUSDCompact(Double.POSITIVE_INFINITY))
     }
+
+    // FIN2-06: frontera K→M. Antes el sufijo se decidía ANTES de redondear y 999.960 mostraba
+    // "CLP 1000K" (la rama K con 1 decimal redondea 999,96 → 1000). El umbral de la rama M
+    // corresponde ahora a la precisión decimal de cada formatter.
+    @Test
+    fun `frontera K a M promueve segun la precision de cada formatter`() {
+        assertEquals("CLP 999,9K", FormatUtils.formatCLPCompact(999_949.0))
+        assertEquals("CLP 1M", FormatUtils.formatCLPCompact(999_950.0))
+        assertEquals("USD 999.99K", FormatUtils.formatUSDCompact(999_994.0))
+        assertEquals("USD 1.00M", FormatUtils.formatUSDCompact(999_995.0))
+    }
 }

@@ -35,7 +35,9 @@ private val Context.securityDataStore by preferencesDataStore(name = "security_p
  * para evitar el problema huevo-gallina con el desbloqueo por PIN.
  *
  * El verificador se persiste como dos campos cifrados independientes (hash y salt), cada uno con
- * su propio IV, en el formato `iv_b64:ct_b64`.
+ * su propio IV, en el formato `enc:iv_b64:ct_b64` (SEC2-07: el prefijo distingue inequívocamente
+ * un valor cifrado de uno legado en claro; un valor cifrado que no descifra se reporta como
+ * [VerifierResult.Unavailable] en vez de fingir un "PIN incorrecto" eterno).
  */
 class SecurityPreferences(private val context: Context) {
 
@@ -45,9 +47,22 @@ class SecurityPreferences(private val context: Context) {
         val BIOMETRIC_ENABLED = booleanPreferencesKey("biometric_enabled")
         val AUTO_LOCK_MINUTES = intPreferencesKey("auto_lock_minutes")
         val FAILED_ATTEMPTS = intPreferencesKey("failed_attempts")
-        val LOCKOUT_UNTIL = longPreferencesKey("lockout_until_elapsed")
+
+        // SEC2-02: lockout con DOBLE anclaje. La clave histórica "lockout_until_elapsed" guarda
+        // (y siempre guardó) reloj de pared; se mantiene el nombre por compatibilidad con datos
+        // persistidos. Se añade un ancla en elapsedRealtime + marcador de arranque para que
+        // adelantar el reloj del sistema no salte la espera dentro de la misma sesión de boot.
+        val LOCKOUT_UNTIL_WALL = longPreferencesKey("lockout_until_elapsed")
+        val LOCKOUT_UNTIL_ELAPSED = longPreferencesKey("lockout_until_elapsed_real")
+        val LOCKOUT_BOOT_ANCHOR = longPreferencesKey("lockout_boot_anchor")
+
         val LOCKOUT_COUNT = intPreferencesKey("lockout_count")
         val HIDE_AMOUNTS = booleanPreferencesKey("hide_amounts")
+
+        // SEC2-04: token del gate biométrico (cifrado con fi_bio_gate_key, NO con la wrap key:
+        // su seguridad la da el auth-binding del Keystore, no la envoltura).
+        val BIO_GATE_IV = stringPreferencesKey("bio_gate_iv")
+        val BIO_GATE_CT = stringPreferencesKey("bio_gate_ct")
     }
 
     companion object {
@@ -57,6 +72,30 @@ class SecurityPreferences(private val context: Context) {
         private const val WRAP_KEY_ALIAS = "fi_pin_wrap_key"
         private const val WRAP_TRANSFORMATION = "AES/GCM/NoPadding"
         private const val GCM_TAG_BITS = 128
+
+        // SEC2-07: prefijo inequívoco de valores envueltos. Los valores legados (SEC-05 inicial)
+        // no lo llevan; unwrap mantiene compatibilidad de tres capas (ver KDoc de unwrap).
+        private const val ENC_PREFIX = "enc:"
+
+        // Formatos de verificador en claro pre-SEC-05 (hash "v1:<hex>"/"v2:<hex>"/"<hex>", salt
+        // "<hex>"): permiten distinguir "legado en claro" de "ciphertext indescifrable".
+        private val LEGACY_VERIFIER_REGEX = Regex("^(v[0-9]+:)?[0-9a-fA-F]+$")
+    }
+
+    /** SEC2-07: resultado de la lectura del verificador del PIN. */
+    sealed interface VerifierResult {
+        /** Verificador disponible. */
+        data class Available(val hash: String, val salt: String) : VerifierResult
+
+        /** No hay PIN configurado. */
+        data object NotSet : VerifierResult
+
+        /**
+         * El verificador existe pero NO se pudo descifrar (wrap key del Keystore invalidada o
+         * dato corrupto). NUNCA debe tratarse como "PIN incorrecto" ni consumir intentos: la UI
+         * debe explicar el problema y ofrecer restablecer la app.
+         */
+        data object Unavailable : VerifierResult
     }
 
     val isPinSet: Flow<Boolean> =
@@ -71,8 +110,15 @@ class SecurityPreferences(private val context: Context) {
     val failedAttempts: Flow<Int> =
         context.securityDataStore.data.map { it[Keys.FAILED_ATTEMPTS] ?: 0 }
 
+    val lockoutUntilWall: Flow<Long> =
+        context.securityDataStore.data.map { it[Keys.LOCKOUT_UNTIL_WALL] ?: 0L }
+
     val lockoutUntilElapsed: Flow<Long> =
-        context.securityDataStore.data.map { it[Keys.LOCKOUT_UNTIL] ?: 0L }
+        context.securityDataStore.data.map { it[Keys.LOCKOUT_UNTIL_ELAPSED] ?: 0L }
+
+    /** SEC2-02: `wall - elapsedRealtime` en el momento de fijar el lockout (identifica el boot). */
+    val lockoutBootAnchor: Flow<Long> =
+        context.securityDataStore.data.map { it[Keys.LOCKOUT_BOOT_ANCHOR] ?: 0L }
 
     /**
      * Número de lockouts encadenados (SEC-06). NO se reinicia al disparar un lockout; solo se
@@ -88,13 +134,33 @@ class SecurityPreferences(private val context: Context) {
     val hideAmounts: Flow<Boolean> =
         context.securityDataStore.data.map { it[Keys.HIDE_AMOUNTS] ?: true }
 
-    /** Devuelve (hash, salt) o null si no hay PIN configurado. */
-    suspend fun getHashAndSalt(): Pair<String, String>? {
+    /**
+     * Lee el verificador del PIN distinguiendo "no hay PIN", "disponible" y "no descifrable"
+     * (SEC2-07). Si se leyó con éxito un valor cifrado SIN prefijo (escrituras del SEC-05
+     * inicial), se re-envuelve oportunistamente con el prefijo `enc:` para futuras lecturas.
+     */
+    suspend fun getVerifier(): VerifierResult {
         val prefs = context.securityDataStore.data.first()
-        val hash = prefs[Keys.PIN_HASH]?.let { unwrap(it) }
-        val salt = prefs[Keys.PIN_SALT]?.let { unwrap(it) }
-        return if ((hash != null) && (salt != null)) hash to salt else null
+        val storedHash = prefs[Keys.PIN_HASH] ?: return VerifierResult.NotSet
+        val storedSalt = prefs[Keys.PIN_SALT] ?: return VerifierResult.NotSet
+
+        val hash = unwrap(storedHash) ?: return VerifierResult.Unavailable
+        val salt = unwrap(storedSalt) ?: return VerifierResult.Unavailable
+
+        // Re-envoltura oportunista con prefijo para valores cifrados legados sin él.
+        if (needsPrefixRewrap(storedHash) || needsPrefixRewrap(storedSalt)) {
+            runCatching { updatePinHash(hash, salt) }
+        }
+        return VerifierResult.Available(hash, salt)
     }
+
+    /**
+     * ¿Es un valor cifrado persistido sin el prefijo `enc:`? (Solo se invoca tras un unwrap
+     * exitoso: si no es legado en claro y tiene ':' sin prefijo, fue descifrado.)
+     */
+    private fun needsPrefixRewrap(stored: String): Boolean =
+        !stored.startsWith(ENC_PREFIX) && stored.contains(':') &&
+            !LEGACY_VERIFIER_REGEX.matches(stored)
 
     suspend fun setPin(hash: String, salt: String) {
         val wrappedHash = wrap(hash)
@@ -103,7 +169,9 @@ class SecurityPreferences(private val context: Context) {
             it[Keys.PIN_HASH] = wrappedHash
             it[Keys.PIN_SALT] = wrappedSalt
             it[Keys.FAILED_ATTEMPTS] = 0
-            it[Keys.LOCKOUT_UNTIL] = 0L
+            it[Keys.LOCKOUT_UNTIL_WALL] = 0L
+            it[Keys.LOCKOUT_UNTIL_ELAPSED] = 0L
+            it[Keys.LOCKOUT_BOOT_ANCHOR] = 0L
             it[Keys.LOCKOUT_COUNT] = 0
         }
     }
@@ -121,14 +189,18 @@ class SecurityPreferences(private val context: Context) {
         }
     }
 
-    /** Elimina el PIN y, por seguridad, desactiva la biometría asociada. */
+    /** Elimina el PIN y, por seguridad, desactiva la biometría asociada (incluido su gate). */
     suspend fun clearPin() {
         context.securityDataStore.edit {
             it.remove(Keys.PIN_HASH)
             it.remove(Keys.PIN_SALT)
             it[Keys.BIOMETRIC_ENABLED] = false
+            it.remove(Keys.BIO_GATE_IV)
+            it.remove(Keys.BIO_GATE_CT)
             it[Keys.FAILED_ATTEMPTS] = 0
-            it[Keys.LOCKOUT_UNTIL] = 0L
+            it[Keys.LOCKOUT_UNTIL_WALL] = 0L
+            it[Keys.LOCKOUT_UNTIL_ELAPSED] = 0L
+            it[Keys.LOCKOUT_BOOT_ANCHOR] = 0L
             it[Keys.LOCKOUT_COUNT] = 0
         }
     }
@@ -145,8 +217,39 @@ class SecurityPreferences(private val context: Context) {
         context.securityDataStore.edit { it[Keys.FAILED_ATTEMPTS] = value }
     }
 
-    suspend fun setLockoutUntil(elapsedMillis: Long) {
-        context.securityDataStore.edit { it[Keys.LOCKOUT_UNTIL] = elapsedMillis }
+    /**
+     * SEC2-02: persiste el lockout con doble anclaje (reloj de pared + elapsedRealtime + marcador
+     * de boot). Pasar todo en 0 para limpiarlo.
+     */
+    suspend fun setLockout(wallUntil: Long, elapsedUntil: Long, bootAnchor: Long) {
+        context.securityDataStore.edit {
+            it[Keys.LOCKOUT_UNTIL_WALL] = wallUntil
+            it[Keys.LOCKOUT_UNTIL_ELAPSED] = elapsedUntil
+            it[Keys.LOCKOUT_BOOT_ANCHOR] = bootAnchor
+        }
+    }
+
+    /** SEC2-04: persiste el token del gate biométrico (IV + ciphertext, ya cifrado por la gate key). */
+    suspend fun setBiometricGate(ivB64: String, ctB64: String) {
+        context.securityDataStore.edit {
+            it[Keys.BIO_GATE_IV] = ivB64
+            it[Keys.BIO_GATE_CT] = ctB64
+        }
+    }
+
+    suspend fun clearBiometricGate() {
+        context.securityDataStore.edit {
+            it.remove(Keys.BIO_GATE_IV)
+            it.remove(Keys.BIO_GATE_CT)
+        }
+    }
+
+    /** Devuelve (ivB64, ctB64) del gate biométrico, o null si no hay token sellado. */
+    suspend fun biometricGate(): Pair<String, String>? {
+        val prefs = context.securityDataStore.data.first()
+        val iv = prefs[Keys.BIO_GATE_IV]
+        val ct = prefs[Keys.BIO_GATE_CT]
+        return if (iv != null && ct != null) iv to ct else null
     }
 
     suspend fun setLockoutCount(value: Int) {
@@ -159,33 +262,50 @@ class SecurityPreferences(private val context: Context) {
 
     // --- Envoltura AES/GCM del verificador del PIN con clave del Android Keystore (SEC-05) ---
 
-    /** Cifra [plain] y devuelve `iv_b64:ct_b64`. */
+    /** Cifra [plain] y devuelve `enc:iv_b64:ct_b64` (prefijo inequívoco, SEC2-07). */
     private fun wrap(plain: String): String {
         val cipher = Cipher.getInstance(WRAP_TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, wrapKey())
         val ct = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
         val ivB64 = Base64.encodeToString(cipher.iv, Base64.NO_WRAP)
         val ctB64 = Base64.encodeToString(ct, Base64.NO_WRAP)
-        return "$ivB64:$ctB64"
+        return "$ENC_PREFIX$ivB64:$ctB64"
     }
 
     /**
-     * Descifra un valor con formato `iv_b64:ct_b64`. Por compatibilidad, si [stored] NO tiene ese
-     * formato (instalaciones previas a SEC-05 con hash/salt en claro), se devuelve tal cual para no
-     * invalidar el PIN existente; en el próximo [setPin]/[updatePinHash] se reescribirá cifrado.
+     * Descifra un valor persistido, con compatibilidad de TRES capas (SEC2-07):
+     *
+     * 1. Prefijo `enc:` (escrituras nuevas): descifrar; si falla → `null` (verificador NO
+     *    disponible). Antes, un fallo devolvía el ciphertext como si fuera el hash, dejando al
+     *    usuario bloqueado para siempre con un "PIN incorrecto" engañoso (o crasheando en
+     *    hexToBytes con el salt corrupto).
+     * 2. Sin prefijo pero con ':' (escrituras del SEC-05 inicial): intentar descifrar; si falla,
+     *    distinguir: formato de verificador legado en claro ("v1:<hex>"/"<hex>") → devolver tal
+     *    cual; cualquier otra cosa es ciphertext indescifrable → `null`.
+     * 3. Sin ':' : verificador legado en claro pre-SEC-05 → devolver tal cual.
+     *
+     * @return el valor en claro, o `null` si existe pero no se puede descifrar.
      */
-    private fun unwrap(stored: String): String {
-        val sep = stored.indexOf(':')
-        if (sep <= 0) return stored
-        val ivB64 = stored.substring(0, sep)
-        val ctB64 = stored.substring(sep + 1)
+    private fun unwrap(stored: String): String? {
+        if (stored.startsWith(ENC_PREFIX)) {
+            return decryptPayload(stored.removePrefix(ENC_PREFIX))
+        }
+        if (!stored.contains(':')) return stored // legado en claro (capa 3)
+        decryptPayload(stored)?.let { return it } // capa 2: valor SEC-05 sin prefijo
+        return if (LEGACY_VERIFIER_REGEX.matches(stored)) stored else null
+    }
+
+    /** Descifra `iv_b64:ct_b64` o devuelve `null` si no es descifrable. */
+    private fun decryptPayload(payload: String): String? {
+        val sep = payload.indexOf(':')
+        if (sep <= 0) return null
         return runCatching {
-            val iv = Base64.decode(ivB64, Base64.NO_WRAP)
-            val ct = Base64.decode(ctB64, Base64.NO_WRAP)
+            val iv = Base64.decode(payload.substring(0, sep), Base64.NO_WRAP)
+            val ct = Base64.decode(payload.substring(sep + 1), Base64.NO_WRAP)
             val cipher = Cipher.getInstance(WRAP_TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, wrapKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
             String(cipher.doFinal(ct), Charsets.UTF_8)
-        }.getOrDefault(stored)
+        }.getOrNull()
     }
 
     private fun wrapKey(): SecretKey {

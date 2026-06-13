@@ -19,6 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -30,28 +31,29 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.entity.InvestmentEntity
 import com.example.security.SecurityViewModel
 import com.example.ui.components.AmountVisibilityToggle
 import com.example.ui.components.EmptyState
 import com.example.ui.components.ErrorState
 import com.example.ui.components.FinanceCard
+import com.example.ui.components.LocalAmountsHidden
 import com.example.ui.components.MainTopBar
 import com.example.ui.components.CountUpAmountText
 import com.example.ui.components.PrivacyAmountText
+import com.example.ui.components.maskAmount
 import com.example.ui.components.pressScale
 import com.example.ui.theme.Motion
 import com.example.ui.theme.AccentBlue
 import com.example.ui.theme.AccentCyan
-import com.example.ui.theme.ExcelGreen
-import com.example.ui.theme.ExcelMediumBlue
-import com.example.ui.theme.ExcelRed
 import com.example.ui.theme.LocalFinanceColors
 import com.example.ui.viewmodel.FinanceViewModel
 import com.example.ui.viewmodel.PriceUpdateState
@@ -63,9 +65,10 @@ import java.util.Locale
 /** Intervalo del refresco de precios en vivo (foreground). Acorde al rate limit del tier gratis. */
 private const val AUTO_REFRESH_INTERVAL_MS = 60_000L
 
-// Colores de rendimiento CLAROS para usar SOBRE el scrim oscuro de la hero card (UX-02). Son más
-// luminosos que Success/Negative del tema para mantener contraste AA (>4.5:1) sobre el degradado
-// azul→cyan oscurecido. Solo aplican dentro de la tarjeta hero; el resto usa los colores del tema.
+// UX2-02: colores de rendimiento de la hero card. Medidos sobre el degradado azul→cyan con scrim,
+// estos tonos NO alcanzan AA (>4.5:1) como color de texto, por lo que SOLO se usan en el icono
+// ▲/▼ dentro de un chip con fondo sólido oscuro (negro alpha 0.45). Los montos y porcentajes en
+// la hero van en blanco puro, que sí pasa AA sobre el scrim uniforme de negro alpha 0.55.
 private val HeroPositive = Color(0xFF6EE7B7)
 private val HeroNegative = Color(0xFFFCA5A5)
 
@@ -101,9 +104,17 @@ fun PortafolioScreen(
         }
     }
 
-    var showAddDialog by remember { mutableStateOf(value = false) }
-    var selectedStockToEdit by remember { mutableStateOf<InvestmentEntity?>(null) }
-    var showDeleteConfirmDialog by remember { mutableStateOf<InvestmentEntity?>(null) }
+    // UX2-01: colores semánticos del tema (claro/oscuro) en lugar de los Excel* fijos.
+    val finance = LocalFinanceColors.current
+
+    // UX2-09: estado de diálogos en rememberSaveable para sobrevivir muerte de proceso/rotación.
+    // Para los diálogos de edición/borrado se guarda solo el ID (Int, saveable) y se re-resuelve
+    // la entidad desde el flow de inversiones; así no hay que serializar la entidad completa.
+    var showAddDialog by rememberSaveable { mutableStateOf(value = false) }
+    var selectedStockToEditId by rememberSaveable { mutableStateOf<Int?>(null) }
+    var deleteConfirmStockId by rememberSaveable { mutableStateOf<Int?>(null) }
+    val selectedStockToEdit = selectedStockToEditId?.let { id -> rawStocks.firstOrNull { it.id == id } }
+    val showDeleteConfirmDialog = deleteConfirmStockId?.let { id -> rawStocks.firstOrNull { it.id == id } }
 
     val stocksListState = rememberLazyListState()
 
@@ -113,7 +124,7 @@ fun PortafolioScreen(
             val fabInteraction = remember { MutableInteractionSource() }
             FloatingActionButton(
                 onClick = { showAddDialog = true },
-                containerColor = ExcelMediumBlue,
+                containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = Color.White,
                 interactionSource = fabInteraction,
                 modifier = Modifier
@@ -166,16 +177,13 @@ fun PortafolioScreen(
                             )
                         )
                 )
-                // Scrim oscuro sobre TODO el degradado: garantiza contraste AA (>4.5:1) del texto
-                // blanco translúcido en todo el ancho, incluido el lado claro (AccentCyan). UX-02.
+                // UX2-02: scrim negro UNIFORME (alpha 0.55) sobre TODO el degradado. El gradiente
+                // anterior (0.25→0.40) dejaba ratios medidos de 1.65–3.7:1 en el lado claro
+                // (AccentCyan); con 0.55 uniforme el texto blanco (alpha ≥ 0.85) sí alcanza AA.
                 Box(
                     modifier = Modifier
                         .matchParentSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Black.copy(alpha = 0.25f), Color.Black.copy(alpha = 0.40f))
-                            )
-                        )
+                        .background(Color.Black.copy(alpha = 0.55f))
                 )
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -183,7 +191,7 @@ fun PortafolioScreen(
                 ) {
                     Text(
                         "VALOR ACTUAL DEL PORTAFOLIO",
-                        style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.7f), fontWeight = FontWeight.Bold)
+                        style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.85f), fontWeight = FontWeight.Bold)
                     )
 
                     CountUpAmountText(
@@ -203,7 +211,7 @@ fun PortafolioScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Total Invertido", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.7f))
+                            Text("Total Invertido", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.85f))
                             PrivacyAmountText(
                                 amount = FormatUtils.formatUSD(metrics.totalInvested),
                                 style = MaterialTheme.typography.titleMedium.copy(color = Color.White, fontWeight = FontWeight.Bold),
@@ -218,26 +226,27 @@ fun PortafolioScreen(
                             horizontalAlignment = Alignment.End,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Rendimiento Neto", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.7f))
+                            Text("Rendimiento Neto", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.85f))
                             val gl = metrics.totalGainLoss
                             val pct = metrics.totalYieldPercent
                             val sign = if (gl >= 0) "+" else ""
-                            // Sobre el scrim oscuro se usan variantes CLARAS de alto contraste
-                            // (Success/Negative son demasiado luminosos-medios para AA). UX-02.
-                            val labelColor = if (gl >= 0) HeroPositive else HeroNegative
 
+                            // UX2-02: el monto va en blanco puro (HeroPositive/HeroNegative no
+                            // pasan AA como color de texto sobre el scrim). El signo semántico
+                            // viaja en el chip de porcentaje con fondo sólido oscuro.
                             // Monto enmascarable; el porcentaje siempre visible (no revela monto exacto).
                             PrivacyAmountText(
                                 amount = "$sign${FormatUtils.formatUSD(gl)}",
-                                style = MaterialTheme.typography.titleMedium.copy(color = labelColor, fontWeight = FontWeight.Bold),
-                                color = labelColor,
+                                style = MaterialTheme.typography.titleMedium.copy(color = Color.White, fontWeight = FontWeight.Bold),
+                                color = Color.White,
                                 maxLines = 1,
                                 softWrap = false,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            Text(
-                                text = FormatUtils.formatPercentage2Signed(pct),
-                                style = MaterialTheme.typography.bodySmall.copy(color = labelColor, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.height(2.dp))
+                            HeroPercentChip(
+                                percentText = FormatUtils.formatPercentage2Signed(pct),
+                                positive = gl >= 0,
                             )
                         }
                     }
@@ -249,15 +258,25 @@ fun PortafolioScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
+                            // UX2-02: ticker en blanco puro y porcentaje en chip de fondo sólido
+                            // oscuro (los colores Hero* solo van en el icono ▲/▼ del chip).
                             metrics.best?.let { best ->
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text("Mejor activo", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.7f))
-                                    Text(
-                                        "${best.ticker}  ${FormatUtils.formatPercentage2Signed(best.yieldPercent)}",
-                                        style = MaterialTheme.typography.bodyMedium.copy(color = HeroPositive, fontWeight = FontWeight.Bold),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Text("Mejor activo", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.85f))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            best.ticker,
+                                            style = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontWeight = FontWeight.Bold),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        HeroPercentChip(
+                                            percentText = FormatUtils.formatPercentage2Signed(best.yieldPercent),
+                                            positive = true,
+                                        )
+                                    }
                                 }
                             }
                             metrics.worst?.let { worst ->
@@ -265,13 +284,21 @@ fun PortafolioScreen(
                                     horizontalAlignment = Alignment.End,
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Text("Peor activo", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.7f))
-                                    Text(
-                                        "${worst.ticker}  ${FormatUtils.formatPercentage2Signed(worst.yieldPercent)}",
-                                        style = MaterialTheme.typography.bodyMedium.copy(color = HeroNegative, fontWeight = FontWeight.Bold),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Text("Peor activo", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.85f))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            worst.ticker,
+                                            style = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontWeight = FontWeight.Bold),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        HeroPercentChip(
+                                            percentText = FormatUtils.formatPercentage2Signed(worst.yieldPercent),
+                                            positive = false,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -307,7 +334,12 @@ fun PortafolioScreen(
                         Button(
                             onClick = { viewModel.refreshPrices() },
                             enabled = priceState !is PriceUpdateState.Loading,
-                            colors = ButtonDefaults.buttonColors(containerColor = ExcelMediumBlue),
+                            // UX2-01: contenedor semántico del tema + contenido blanco explícito
+                            // para asegurar contraste del texto/icono sobre el primary.
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = Color.White,
+                            ),
                             shape = MaterialTheme.shapes.small,
                             modifier = Modifier.testTag("refresh_prices_button")
                         ) {
@@ -332,7 +364,7 @@ fun PortafolioScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            val amber = LocalFinanceColors.current.warning
+                            val amber = finance.warning
                             val showRetrying = autoRefreshEnabled && liveError != null
                             Box(
                                 modifier = Modifier
@@ -342,7 +374,7 @@ fun PortafolioScreen(
                                         when {
                                             !autoRefreshEnabled -> MaterialTheme.colorScheme.outline
                                             showRetrying -> amber
-                                            else -> ExcelGreen
+                                            else -> finance.success
                                         }
                                     )
                             )
@@ -376,8 +408,8 @@ fun PortafolioScreen(
                     // Mensaje del resultado de la actualización (éxito o error claro).
                     // Aparece/desaparece con un fade + expand sutil.
                     val statusBanner: Pair<String, Color>? = when (val state = priceState) {
-                        is PriceUpdateState.Success -> state.message to ExcelGreen
-                        is PriceUpdateState.Error -> state.message to ExcelRed
+                        is PriceUpdateState.Success -> state.message to finance.success
+                        is PriceUpdateState.Error -> state.message to finance.negative
                         else -> null
                     }
                     AnimatedVisibility(
@@ -397,10 +429,20 @@ fun PortafolioScreen(
                 modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp)
             )
 
+            // UX2-07: ventana de asentamiento (mismo patrón "settled" de DashboardScreen). Los
+            // flows de Room/SQLCipher arrancan vacíos antes de resolver; sin esta ventana se ve
+            // por un frame el estado vacío aunque el usuario sí tenga activos.
+            var settled by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                delay(300)
+                settled = true
+            }
+
             if (metrics.stocks.isEmpty()) {
                 // UX-08: diferencia "vacío" (sin activos) de "error" (falló la carga de precios).
                 // Si la lista está vacía por un fallo de red/API, se muestra ErrorState con acción
-                // de reintento en vez del estado vacío genérico.
+                // de reintento en vez del estado vacío genérico. El ErrorState tiene PRIORIDAD
+                // sobre la ventana de asentamiento (UX2-07) para no enmascarar errores.
                 val loadErrorMessage = (priceState as? PriceUpdateState.Error)?.message ?: liveError
                 if (loadErrorMessage != null) {
                     ErrorState(
@@ -409,6 +451,10 @@ fun PortafolioScreen(
                         icon = Icons.Default.CloudOff,
                         onRetry = { viewModel.refreshPrices() },
                     )
+                } else if (!settled) {
+                    // UX2-07: placeholder neutro mientras asienta el flow; evita el destello del
+                    // estado vacío durante la carga inicial.
+                    Box(modifier = Modifier.weight(1f))
                 } else {
                     EmptyState(
                         modifier = Modifier.weight(1f),
@@ -428,7 +474,7 @@ fun PortafolioScreen(
                 ) {
                     items(metrics.stocks, key = { it.id }) { stock ->
                         val isPositive = stock.gainLoss >= 0
-                        val valueColor = if (isPositive) ExcelGreen else ExcelRed
+                        val valueColor = if (isPositive) finance.success else finance.negative
                         val sign = if (isPositive) "+" else ""
 
                         FinanceCard(
@@ -438,7 +484,9 @@ fun PortafolioScreen(
                                 .testTag("stock_item_${stock.ticker}"),
                             contentPadding = PaddingValues(12.dp),
                             onClick = {
-                                selectedStockToEdit = rawStocks.firstOrNull { it.id == stock.id }
+                                // UX2-09: se guarda solo el id (saveable); la entidad se
+                                // re-resuelve desde el flow al componer el diálogo.
+                                selectedStockToEditId = stock.id
                             }
                         ) {
                             Column {
@@ -455,14 +503,14 @@ fun PortafolioScreen(
                                         Box(
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(8.dp))
-                                                .background(ExcelMediumBlue.copy(alpha = 0.1f))
+                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
                                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                                         ) {
                                             Text(
                                                 stock.ticker,
                                                 style = MaterialTheme.typography.bodyMedium.copy(
                                                     fontWeight = FontWeight.Bold,
-                                                    color = ExcelMediumBlue
+                                                    color = MaterialTheme.colorScheme.primary
                                                 )
                                             )
                                         }
@@ -480,7 +528,7 @@ fun PortafolioScreen(
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(4.dp))
-                                            .background(ExcelMediumBlue.copy(alpha = 0.08f))
+                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
                                             .padding(horizontal = 6.dp, vertical = 2.dp)
                                     ) {
                                         Text(
@@ -488,7 +536,7 @@ fun PortafolioScreen(
                                             style = MaterialTheme.typography.bodySmall.copy(
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = ExcelMediumBlue
+                                                color = MaterialTheme.colorScheme.primary
                                             )
                                         )
                                     }
@@ -497,13 +545,14 @@ fun PortafolioScreen(
                                     // M3 mide 48dp por defecto; el ícono mantiene su tamaño visual. UX-05.
                                     IconButton(
                                         onClick = {
-                                            showDeleteConfirmDialog = rawStocks.firstOrNull { it.id == stock.id }
+                                            // UX2-09: id saveable; la entidad se re-resuelve del flow.
+                                            deleteConfirmStockId = stock.id
                                         }
                                     ) {
                                         Icon(
                                             Icons.Default.Delete,
                                             contentDescription = "Borrar",
-                                            tint = ExcelRed,
+                                            tint = finance.negative,
                                             modifier = Modifier.size(16.dp)
                                         )
                                     }
@@ -518,8 +567,10 @@ fun PortafolioScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("Participación", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        // UX2-13: la cantidad también se enmascara en modo privacidad
+                                        // (cantidad × precio público reconstruiría el valor oculto).
                                         Text(
-                                            "Cant: ${stock.quantity}",
+                                            "Cant: ${maskAmount(stock.quantity.toString(), LocalAmountsHidden.current)}",
                                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -585,27 +636,37 @@ fun PortafolioScreen(
 
     // Modal dialogue to ADD Stock
     if (showAddDialog) {
+        // ARQ2-02 (defensa UI): bloquea el doble-submit lógico. La transacción de BD ya evita el
+        // crash, pero un doble tap en "Invertir" antes de cerrarse el diálogo fusionaría la misma
+        // posición dos veces. El botón vive en AddStockDialog (DashboardScreen.kt, fuera del
+        // alcance de este fix), por lo que la guarda se aplica aquí, en el callback de confirmación.
+        var isSaving by remember { mutableStateOf(false) }
         AddStockDialog(
             viewModel = viewModel,
             onDismiss = { showAddDialog = false },
         ) { ticker, name, qty, buyPrice, currentPrice ->
-            viewModel.addStock(ticker, name, qty, buyPrice, currentPrice)
-            showAddDialog = false
+            if (!isSaving) {
+                isSaving = true
+                viewModel.addStock(ticker, name, qty, buyPrice, currentPrice)
+                showAddDialog = false
+            }
         }
     }
 
     // Modal dialogue to EDIT Stock
     selectedStockToEdit?.let { stock ->
-        var editQty by remember { mutableStateOf(stock.quantity.toString()) }
-        var editBuyPrice by remember { mutableStateOf(stock.purchasePrice.toString()) }
-        var editCurrentPrice by remember { mutableStateOf(stock.currentPrice.toString()) }
+        // UX2-09: campos del formulario en rememberSaveable, keyed por stock.id, para que lo
+        // tecleado sobreviva rotación/muerte de proceso y se reinicie al cambiar de activo.
+        var editQty by rememberSaveable(stock.id) { mutableStateOf(stock.quantity.toString()) }
+        var editBuyPrice by rememberSaveable(stock.id) { mutableStateOf(stock.purchasePrice.toString()) }
+        var editCurrentPrice by rememberSaveable(stock.id) { mutableStateOf(stock.currentPrice.toString()) }
 
-        var errorMsg by remember { mutableStateOf("") }
+        var errorMsg by rememberSaveable(stock.id) { mutableStateOf("") }
 
         AlertDialog(
-            onDismissRequest = { selectedStockToEdit = null },
+            onDismissRequest = { selectedStockToEditId = null },
             title = {
-                Text("Editar Stock: ${stock.ticker}", fontWeight = FontWeight.Bold, color = ExcelMediumBlue)
+                Text("Editar Stock: ${stock.ticker}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -616,7 +677,15 @@ fun PortafolioScreen(
                     )
 
                     if (errorMsg.isNotEmpty()) {
-                        Text(errorMsg, color = ExcelRed, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                        // UX2-08: liveRegion para que los lectores de pantalla anuncien el error
+                        // de validación al aparecer, sin mover el foco.
+                        Text(
+                            errorMsg,
+                            color = finance.negative,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                        )
                     }
 
                     OutlinedTextField(
@@ -657,15 +726,17 @@ fun PortafolioScreen(
                         val buyPrice = editBuyPrice.toDoubleOrNull()
                         val currentPrice = editCurrentPrice.toDoubleOrNull()
 
-                        if ((qty == null) || (qty <= 0.0)) {
+                        // FIN2-02: además de null/<=0, se rechazan NaN/Infinity. Kotlin parsea
+                        // "NaN", "Infinity" y "9e999" (overflow a Infinity) como Double válidos.
+                        if ((qty == null) || !qty.isFinite() || (qty <= 0.0)) {
                             errorMsg = "Cantidad inválida."
                             return@Button
                         }
-                        if ((buyPrice == null) || (buyPrice <= 0.0)) {
+                        if ((buyPrice == null) || !buyPrice.isFinite() || (buyPrice <= 0.0)) {
                             errorMsg = "Precio compra inválido."
                             return@Button
                         }
-                        if ((currentPrice == null) || (currentPrice <= 0.0)) {
+                        if ((currentPrice == null) || !currentPrice.isFinite() || (currentPrice <= 0.0)) {
                             errorMsg = "Precio actual inválido."
                             return@Button
                         }
@@ -678,7 +749,7 @@ fun PortafolioScreen(
                                 updatedAt = System.currentTimeMillis()
                             )
                         )
-                        selectedStockToEdit = null
+                        selectedStockToEditId = null
                     },
                     modifier = Modifier.testTag("submit_edit_stock")
                 ) {
@@ -686,7 +757,7 @@ fun PortafolioScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { selectedStockToEdit = null }) {
+                TextButton(onClick = { selectedStockToEditId = null }) {
                     Text("Cancelar")
                 }
             }
@@ -696,25 +767,63 @@ fun PortafolioScreen(
     // Confirmation delete dialog
     showDeleteConfirmDialog?.let { currentDeletingStock ->
         AlertDialog(
-            onDismissRequest = { showDeleteConfirmDialog = null },
+            onDismissRequest = { deleteConfirmStockId = null },
             title = { Text("Confirmar Retiro", fontWeight = FontWeight.Bold) },
             text = { Text("¿Deseas de verdad eliminar la acción ${currentDeletingStock.ticker} (${currentDeletingStock.companyName}) por completo?") },
             confirmButton = {
                 Button(
                     onClick = {
                         viewModel.deleteStock(currentDeletingStock.id)
-                        showDeleteConfirmDialog = null
+                        deleteConfirmStockId = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = ExcelRed)
+                    // UX2-01: negativo semántico del tema + contenido blanco explícito.
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = finance.negative,
+                        contentColor = Color.White,
+                    )
                 ) {
                     Text("Retirar", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteConfirmDialog = null }) {
+                TextButton(onClick = { deleteConfirmStockId = null }) {
                     Text("Cancelar")
                 }
             }
+        )
+    }
+}
+
+/**
+ * UX2-02: chip de porcentaje para la hero card. El fondo sólido oscuro (negro alpha 0.45) da una
+ * base estable independiente del degradado, de modo que el texto blanco del porcentaje pasa AA.
+ * El color semántico (HeroPositive/HeroNegative) queda confinado al icono ▲/▼, que es redundante
+ * con el signo del porcentaje y no necesita cumplir contraste de texto.
+ */
+@Composable
+private fun HeroPercentChip(percentText: String, positive: Boolean) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color.Black.copy(alpha = 0.45f))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+        Text(
+            text = if (positive) "▲" else "▼",
+            style = MaterialTheme.typography.labelSmall.copy(
+                color = if (positive) HeroPositive else HeroNegative,
+                fontWeight = FontWeight.Bold,
+            )
+        )
+        Spacer(modifier = Modifier.width(3.dp))
+        Text(
+            text = percentText,
+            style = MaterialTheme.typography.labelSmall.copy(
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+            ),
+            maxLines = 1,
         )
     }
 }

@@ -3,10 +3,13 @@
    Reglas de Auto Backup para Android <= 11. android:allowBackup="false" ya desactiva el
    respaldo; estas exclusiones explícitas son defensa en profundidad para que ningún dato
    financiero ni credencial salga del dispositivo.
-   Nota: <full-backup-content> no admite excluir el dominio "database" directamente; se
-   excluyen las preferencias y, por la BD, basta con allowBackup="false".
+   BLD2-03: <full-backup-content> SÍ admite el dominio "database" (root/file/database/
+   sharedpref/external según la doc oficial de Auto Backup); el comentario anterior que
+   afirmaba lo contrario era incorrecto y dejaba la BD sin excluir en este fichero.
+   Se excluye el dominio database completo (la app no tiene ninguna BD respaldable).
 -->
 <full-backup-content>
+    <exclude domain="database" path="." />
     <exclude domain="file" path="datastore/security_prefs.preferences_pb" />
     <exclude domain="sharedpref" path="." />
 </full-backup-content>

@@ -4,13 +4,14 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -18,13 +19,18 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -37,9 +43,7 @@ import com.example.ui.components.MainTopBar
 import com.example.ui.components.pressScale
 import com.example.ui.security.ConfirmPinDialog
 import com.example.ui.security.SecuritySettingsCard
-import com.example.ui.theme.ExcelDarkBlue
-import com.example.ui.theme.ExcelGreen
-import com.example.ui.theme.ExcelRed
+import com.example.ui.theme.LocalFinanceColors
 import com.example.ui.viewmodel.FinanceViewModel
 import com.example.util.IconMapper
 import kotlinx.coroutines.launch
@@ -55,15 +59,24 @@ fun AjustesScreen(
     val isPinSet by securityViewModel.isPinSet.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    // UX2-01: tokens semánticos de color del tema (success/negative) en lugar de Excel*.
+    val finance = LocalFinanceColors.current
 
-    var tabIndex by remember { mutableStateOf(0) } // 0: Gastos, 1: Ingresos
+    // UX2-09: estado de UI sobrevive a muerte de proceso/rotación con rememberSaveable.
+    var tabIndex by rememberSaveable { mutableStateOf(0) } // 0: Gastos, 1: Ingresos
 
-    var showAddCategoryDialog by remember { mutableStateOf(false) }
-    var selectedCategoryToEdit by remember { mutableStateOf<CategoryEntity?>(null) }
-    var showResetSemillaConfirm by remember { mutableStateOf(false) }
-    var showDeleteAllConfirm by remember { mutableStateOf(false) }
+    var showAddCategoryDialog by rememberSaveable { mutableStateOf(false) }
+    // UX2-09: la entidad no es saveable; se guarda solo el id y se re-resuelve desde allCategories.
+    var selectedCategoryToEditId by rememberSaveable { mutableStateOf<Int?>(null) }
+    val selectedCategoryToEdit: CategoryEntity? =
+        selectedCategoryToEditId?.let { id -> categories.find { it.id == id } }
+    // UX2-04: id de la categoría pendiente de confirmación de borrado (saveable por la misma razón).
+    var categoryToDeleteId by rememberSaveable { mutableStateOf<Int?>(null) }
+    var showResetSemillaConfirm by rememberSaveable { mutableStateOf(false) }
+    var showDeleteAllConfirm by rememberSaveable { mutableStateOf(false) }
 
     // Reautenticación para acciones sensibles: si hay PIN, exige confirmarlo antes de ejecutar.
+    // UX2-09: excepción — una lambda no es saveable; se mantiene en remember (residuo documentado).
     var reauthAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     fun runSensitive(action: () -> Unit) {
         if (isPinSet) reauthAction = action else action()
@@ -81,10 +94,10 @@ fun AjustesScreen(
             val fabInteraction = remember { MutableInteractionSource() }
             FloatingActionButton(
                 onClick = {
-                    selectedCategoryToEdit = null
+                    selectedCategoryToEditId = null
                     showAddCategoryDialog = true
                 },
-                containerColor = ExcelDarkBlue,
+                containerColor = MaterialTheme.colorScheme.primary, // UX2-01: color de tema, no Excel*
                 contentColor = Color.White,
                 interactionSource = fabInteraction,
                 modifier = Modifier
@@ -123,12 +136,12 @@ fun AjustesScreen(
                         Tab(
                             selected = tabIndex == 0,
                             onClick = { tabIndex = 0 },
-                            text = { Text("Gastos (${expensesCats.size})", fontWeight = FontWeight.Bold, color = if (tabIndex == 0) ExcelRed else MaterialTheme.colorScheme.onSurfaceVariant) }
+                            text = { Text("Gastos (${expensesCats.size})", fontWeight = FontWeight.Bold, color = if (tabIndex == 0) finance.negative else MaterialTheme.colorScheme.onSurfaceVariant) } // UX2-01
                         )
                         Tab(
                             selected = tabIndex == 1,
                             onClick = { tabIndex = 1 },
-                            text = { Text("Ingresos (${incomeCats.size})", fontWeight = FontWeight.Bold, color = if (tabIndex == 1) ExcelGreen else MaterialTheme.colorScheme.onSurfaceVariant) }
+                            text = { Text("Ingresos (${incomeCats.size})", fontWeight = FontWeight.Bold, color = if (tabIndex == 1) finance.success else MaterialTheme.colorScheme.onSurfaceVariant) } // UX2-01
                         )
                     }
 
@@ -149,7 +162,7 @@ fun AjustesScreen(
                             activeList.forEach { cat ->
                               Surface(
                                   onClick = {
-                                      selectedCategoryToEdit = cat
+                                      selectedCategoryToEditId = cat.id
                                       showAddCategoryDialog = true
                                   },
                                   modifier = Modifier.fillMaxWidth(),
@@ -198,20 +211,16 @@ fun AjustesScreen(
                                         }
                                     }
 
+                                    // UX2-04: sin Modifier.size(28.dp) — el IconButton recupera su
+                                    // target táctil accesible de 48dp; el borrado ahora pide confirmación.
                                     IconButton(
-                                        onClick = {
-                                            viewModel.deleteCategory(cat) { success, msg ->
-                                                scope.launch {
-                                                    snackbarHostState.showSnackbar(msg)
-                                                }
-                                            }
-                                        },
-                                        modifier = Modifier.size(28.dp).testTag("delete_category_${cat.name}")
+                                        onClick = { categoryToDeleteId = cat.id },
+                                        modifier = Modifier.testTag("delete_category_${cat.name}")
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Delete,
                                             contentDescription = "Eliminar Categoría",
-                                            tint = ExcelRed,
+                                            tint = finance.negative, // UX2-01
                                             modifier = Modifier.size(16.dp)
                                         )
                                     }
@@ -278,10 +287,10 @@ fun AjustesScreen(
                                 modifier = Modifier
                                     .size(40.dp)
                                     .clip(MaterialTheme.shapes.small)
-                                    .background(ExcelDarkBlue.copy(alpha = 0.1f)),
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)), // UX2-01
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Default.CloudDownload, contentDescription = null, tint = ExcelDarkBlue)
+                                Icon(Icons.Default.CloudDownload, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                             }
                             Spacer(modifier = Modifier.width(16.dp))
                             Column(modifier = Modifier.weight(1f)) {
@@ -316,16 +325,16 @@ fun AjustesScreen(
                                 modifier = Modifier
                                     .size(40.dp)
                                     .clip(MaterialTheme.shapes.small)
-                                    .background(ExcelRed.copy(alpha = 0.1f)),
+                                    .background(finance.negative.copy(alpha = 0.1f)), // UX2-01
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Default.DeleteForever, contentDescription = null, tint = ExcelRed)
+                                Icon(Icons.Default.DeleteForever, contentDescription = null, tint = finance.negative)
                             }
                             Spacer(modifier = Modifier.width(16.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     "Borrar todos los datos",
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = ExcelRed)
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = finance.negative) // UX2-01
                                 )
                                 Text(
                                     "Limpia todas las transacciones, metas y portafolios del sistema.",
@@ -349,16 +358,59 @@ fun AjustesScreen(
             defaultType = if (tabIndex == 0) "EXPENSE" else "INCOME",
             onDismiss = {
                 showAddCategoryDialog = false
-                selectedCategoryToEdit = null
+                selectedCategoryToEditId = null
             },
-            onSave = { name, type, colorHex, iconName ->
-                if (editing != null) {
-                    viewModel.updateCategory(editing.copy(name = name, type = type, colorHex = colorHex, iconName = iconName))
-                } else {
-                    viewModel.addCategory(name, type, colorHex, iconName)
+            onSave = { name, type, colorHex, iconName, onError ->
+                // ARQ2-05/ARQ2-06: el ViewModel valida colisiones de nombre (índice único) y hace
+                // rename en cascada; el diálogo solo se cierra si no hubo error.
+                val onResult: (String?) -> Unit = { error ->
+                    if (error == null) {
+                        showAddCategoryDialog = false
+                        selectedCategoryToEditId = null
+                    } else {
+                        onError(error)
+                    }
                 }
-                showAddCategoryDialog = false
-                selectedCategoryToEdit = null
+                if (editing != null) {
+                    viewModel.updateCategory(
+                        editing.copy(name = name, type = type, colorHex = colorHex, iconName = iconName),
+                        oldName = editing.name,
+                        onResult = onResult
+                    )
+                } else {
+                    viewModel.addCategory(name, type, colorHex, iconName, onResult)
+                }
+            }
+        )
+    }
+
+    // UX2-04: confirmación previa al borrado de categoría — era la única acción destructiva de la
+    // app sin confirmación (mismo patrón que el borrado de movimientos en MovimientosScreen).
+    val categoryToDelete = categories.find { it.id == categoryToDeleteId }
+    if (categoryToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { categoryToDeleteId = null },
+            title = { Text("Confirmación de Eliminación", fontWeight = FontWeight.Bold) },
+            text = { Text("¿Estás seguro de que deseas eliminar permanentemente la categoría '${categoryToDelete.name}'?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        categoryToDeleteId = null
+                        viewModel.deleteCategory(categoryToDelete) { _, msg ->
+                            scope.launch {
+                                snackbarHostState.showSnackbar(msg)
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = finance.negative, contentColor = Color.White) // UX2-01
+                ) {
+                    Text("Eliminar", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { categoryToDeleteId = null }) {
+                    Text("Cancelar")
+                }
             }
         )
     }
@@ -380,7 +432,7 @@ fun AjustesScreen(
                             }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = ExcelDarkBlue)
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = Color.White) // UX2-01
                 ) {
                     Text("Cargar Semilla", fontWeight = FontWeight.Bold)
                 }
@@ -397,7 +449,7 @@ fun AjustesScreen(
     if (showDeleteAllConfirm) {
         AlertDialog(
             onDismissRequest = { showDeleteAllConfirm = false },
-            title = { Text("¿Confirmas la eliminación total?", fontWeight = FontWeight.Bold, color = ExcelRed) },
+            title = { Text("¿Confirmas la eliminación total?", fontWeight = FontWeight.Bold, color = finance.negative) }, // UX2-01
             text = { Text("Esta acción es irreversible. Se borrará permanentemente todo tu historial, presupuestos y portafolio de acciones local.") },
             confirmButton = {
                 Button(
@@ -410,7 +462,7 @@ fun AjustesScreen(
                             }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = ExcelRed)
+                    colors = ButtonDefaults.buttonColors(containerColor = finance.negative, contentColor = Color.White) // UX2-01
                 ) {
                     Text("Confirmar Borrado", fontWeight = FontWeight.Bold)
                 }
@@ -431,12 +483,14 @@ fun AjustesScreen(
             confirmText = "Confirmar",
             onDismiss = { reauthAction = null },
             onConfirm = { pin, onError ->
-                securityViewModel.verifyPin(pin) { ok ->
+                // SEC: nueva firma de verifyPin — PIN como CharArray (no queda en pool de Strings) y
+                // mensaje de error provisto por el ViewModel (incluye el aviso de lockout).
+                securityViewModel.verifyPin(pin.toCharArray()) { ok, error ->
                     if (ok) {
                         reauthAction = null
                         action()
                     } else {
-                        onError("PIN incorrecto.")
+                        onError(error ?: "PIN incorrecto.")
                     }
                 }
             }
@@ -450,10 +504,14 @@ fun AddEditCategoryFormDialog(
     category: CategoryEntity?,
     defaultType: String,
     onDismiss: () -> Unit,
-    onSave: (name: String, type: String, colorHex: String, iconName: String) -> Unit
+    // ARQ2-05/ARQ2-06: onSave recibe un onError para que el ViewModel reporte colisiones de nombre
+    // y el diálogo muestre el mensaje sin cerrarse.
+    onSave: (name: String, type: String, colorHex: String, iconName: String, onError: (String) -> Unit) -> Unit
 ) {
-    var name by remember { mutableStateOf(category?.name ?: "") }
-    var type by remember { mutableStateOf(category?.type ?: defaultType) }
+    // UX2-09: el formulario sobrevive a rotación/muerte de proceso con rememberSaveable.
+    var name by rememberSaveable { mutableStateOf(category?.name ?: "") }
+    var type by rememberSaveable { mutableStateOf(category?.type ?: defaultType) }
+    val finance = LocalFinanceColors.current // UX2-01
 
     // Paleta de colores asignables a categorías. Se evitan tonos demasiado oscuros (Slate #37474F,
     // Cobalt #1565C0) porque se usan como tint de icono/barra sobre superficies oscuras del
@@ -470,11 +528,11 @@ fun AddEditCategoryFormDialog(
         "#E05A8A", // Rosa (más claro que #C2185B)
         "#5B9BFF"  // Cobalto claro (antes #1565C0)
     )
-    var selectedColor by remember { mutableStateOf(category?.colorHex ?: palette.first()) }
+    var selectedColor by rememberSaveable { mutableStateOf(category?.colorHex ?: palette.first()) } // UX2-09
 
-    var selectedIcon by remember { mutableStateOf(category?.iconName ?: "Category") }
+    var selectedIcon by rememberSaveable { mutableStateOf(category?.iconName ?: "Category") } // UX2-09
 
-    var errorMsg by remember { mutableStateOf("") }
+    var errorMsg by rememberSaveable { mutableStateOf("") } // UX2-09
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -489,7 +547,14 @@ fun AddEditCategoryFormDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (errorMsg.isNotEmpty()) {
-                    Text(errorMsg, color = ExcelRed, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                    // UX2-08: liveRegion para que TalkBack anuncie el error al aparecer.
+                    Text(
+                        errorMsg,
+                        color = finance.negative, // UX2-01
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                    )
                 }
 
                 // Header info
@@ -518,12 +583,12 @@ fun AddEditCategoryFormDialog(
                     Tab(
                         selected = type == "INCOME",
                         onClick = { type = "INCOME" },
-                        text = { Text("Ingresos", color = if (type == "INCOME") ExcelGreen else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold) }
+                        text = { Text("Ingresos", color = if (type == "INCOME") finance.success else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold) } // UX2-01
                     )
                     Tab(
                         selected = type == "EXPENSE",
                         onClick = { type = "EXPENSE" },
-                        text = { Text("Gastos", color = if (type == "EXPENSE") ExcelRed else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold) }
+                        text = { Text("Gastos", color = if (type == "EXPENSE") finance.negative else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold) } // UX2-01
                     )
                 }
 
@@ -532,24 +597,39 @@ fun AddEditCategoryFormDialog(
                 // Color Selection Row
                 Text("Elegir Color", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
                 FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
+                    // UX2-05: grupo de selección única para que TalkBack lo anuncie como radio group.
+                    modifier = Modifier.fillMaxWidth().selectableGroup(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    palette.forEach { cHex ->
+                    palette.forEachIndexed { index, cHex ->
                         val col = Color(android.graphics.Color.parseColor(cHex))
+                        val isSelected = selectedColor == cHex
+                        // UX2-05: celda exterior de 48dp (target táctil accesible) con semántica de
+                        // RadioButton y etiqueta por índice; el círculo visual sigue siendo de 36dp.
                         Box(
                             modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(col)
-                                .border(
-                                    width = if (selectedColor == cHex) 3.dp else 0.dp,
-                                    color = if (selectedColor == cHex) MaterialTheme.colorScheme.onSurface else Color.Transparent,
-                                    shape = CircleShape
+                                .size(48.dp)
+                                .selectable(
+                                    selected = isSelected,
+                                    role = Role.RadioButton,
+                                    onClick = { selectedColor = cHex }
                                 )
-                                .clickable { selectedColor = cHex }
-                        )
+                                .semantics { contentDescription = "Color ${index + 1} de ${palette.size}" },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(col)
+                                    .border(
+                                        width = if (isSelected) 3.dp else 0.dp,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                        shape = CircleShape
+                                    )
+                            )
+                        }
                     }
                 }
 
@@ -558,34 +638,49 @@ fun AddEditCategoryFormDialog(
                 // Icon selection grid
                 Text("Elegir Ícono", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
                 FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
+                    // UX2-05: grupo de selección única para que TalkBack lo anuncie como radio group.
+                    modifier = Modifier.fillMaxWidth().selectableGroup(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     IconMapper.availableIcons.forEach { (iName, iValue) ->
                         val isSelected = selectedIcon == iName
+                        // UX2-05: celda exterior de 48dp con semántica de RadioButton etiquetada con
+                        // el nombre del ícono; el cuadro visual sigue siendo de 36dp.
                         Box(
                             modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(
-                                    if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
+                                .size(48.dp)
+                                .selectable(
+                                    selected = isSelected,
+                                    role = Role.RadioButton,
+                                    onClick = { selectedIcon = iName }
                                 )
-                                .border(
-                                    width = if (isSelected) 2.dp else 1.dp,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                    shape = RoundedCornerShape(8.dp)
-                                )
-                                .clickable { selectedIcon = iName },
+                                .semantics { contentDescription = iName },
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = iValue,
-                                contentDescription = null,
-                                tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
+                                    )
+                                    .border(
+                                        width = if (isSelected) 2.dp else 1.dp,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                        shape = RoundedCornerShape(8.dp)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                // La semántica vive en la celda exterior; el ícono queda sin etiqueta.
+                                Icon(
+                                    imageVector = iValue,
+                                    contentDescription = null,
+                                    tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -598,7 +693,11 @@ fun AddEditCategoryFormDialog(
                         errorMsg = "El nombre es obligatorio."
                         return@Button
                     }
-                    onSave(name.trim(), type, selectedColor, selectedIcon)
+                    // ARQ2-05/ARQ2-06: el error del ViewModel (p. ej. nombre duplicado) se muestra
+                    // en el propio diálogo; el cierre lo decide el call site solo si no hubo error.
+                    onSave(name.trim(), type, selectedColor, selectedIcon) { error ->
+                        errorMsg = error
+                    }
                 },
                 modifier = Modifier.testTag("save_category_btn")
             ) {

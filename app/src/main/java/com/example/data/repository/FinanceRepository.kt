@@ -121,9 +121,14 @@ class FinanceRepository(private val dao: FinanceDao) {
 
     suspend fun insertCategory(category: CategoryEntity) = dao.insertCategory(category)
     suspend fun updateCategory(category: CategoryEntity) = dao.updateCategory(category)
+
+    /** ARQ2-06: rename con propagación atómica a movimientos y presupuestos. */
+    suspend fun renameCategoryCascade(updated: CategoryEntity, oldName: String) =
+        dao.renameCategoryCascade(updated, oldName)
     suspend fun deleteCategory(category: CategoryEntity) = dao.deleteCategory(category)
     suspend fun deleteCategoryById(id: Int) = dao.deleteCategoryById(id)
     suspend fun getTransactionCountForCategory(categoryName: String) = dao.getTransactionCountForCategory(categoryName)
+    suspend fun getBudgetCountForCategory(categoryName: String) = dao.getBudgetCountForCategory(categoryName)
 
     suspend fun insertBudget(budget: BudgetEntity) = dao.insertBudget(budget)
     suspend fun updateBudget(budget: BudgetEntity) = dao.updateBudget(budget)
@@ -131,6 +136,11 @@ class FinanceRepository(private val dao: FinanceDao) {
 
     suspend fun insertInvestment(investment: InvestmentEntity) = dao.insertInvestment(investment)
     suspend fun updateInvestment(investment: InvestmentEntity) = dao.updateInvestment(investment)
+
+    /** ARQ2-04: actualización parcial de precio (no toca quantity/purchasePrice del usuario). */
+    suspend fun updateInvestmentPrice(id: Int, price: Double, now: Long) =
+        dao.updateInvestmentPrice(id, price, now)
+
     suspend fun deleteInvestmentById(id: Int) = dao.deleteInvestmentById(id)
 
     /**
@@ -144,6 +154,10 @@ class FinanceRepository(private val dao: FinanceDao) {
      * Cuidado numérico: si la cantidad total resultara <= 0 (caso degenerado, p. ej. ambos lotes
      * en 0), se evita la división por cero usando el último purchasePrice conocido como fallback.
      * El currentPrice se actualiza al valor más reciente provisto.
+     *
+     * ARQ2-02: el check-then-act completo corre dentro de una transacción Room
+     * ([FinanceDao.upsertInvestmentMergingByTicker]), eliminando la carrera del doble tap
+     * (crash por índice único) y el lost update entre merges concurrentes.
      */
     suspend fun addOrMergeInvestment(
         ticker: String,
@@ -153,41 +167,33 @@ class FinanceRepository(private val dao: FinanceDao) {
         currentPrice: Double,
         currency: String = "USD",
     ) {
-        val normalizedTicker = ticker.trim().uppercase()
-        val existing = dao.getInvestmentByTicker(normalizedTicker)
-        if (existing == null) {
-            dao.insertInvestment(
-                InvestmentEntity(
-                    ticker = normalizedTicker,
-                    companyName = companyName,
-                    quantity = quantity,
-                    purchasePrice = purchasePrice,
-                    currentPrice = currentPrice,
-                    currency = currency,
-                )
-            )
-            return
-        }
-
-        val mergedQuantity = existing.quantity + quantity
-        // Promedio ponderado por cantidad: (q1*p1 + q2*p2) / (q1+q2).
-        val mergedPurchasePrice = if (mergedQuantity > 0.0) {
-            (existing.quantity * existing.purchasePrice + quantity * purchasePrice) / mergedQuantity
-        } else {
-            // Caso degenerado (cantidad total no positiva): se conserva el precio nuevo provisto
-            // para no dividir por cero ni producir NaN/Infinity.
-            purchasePrice
-        }
-
-        dao.updateInvestment(
+        val candidate = InvestmentEntity(
+            ticker = ticker.trim().uppercase(),
+            companyName = companyName,
+            quantity = quantity,
+            purchasePrice = purchasePrice,
+            currentPrice = currentPrice,
+            currency = currency,
+        )
+        dao.upsertInvestmentMergingByTicker(candidate) { existing, incoming ->
+            val mergedQuantity = existing.quantity + incoming.quantity
+            // Promedio ponderado por cantidad: (q1*p1 + q2*p2) / (q1+q2).
+            val mergedPurchasePrice = if (mergedQuantity > 0.0) {
+                (existing.quantity * existing.purchasePrice +
+                    incoming.quantity * incoming.purchasePrice) / mergedQuantity
+            } else {
+                // Caso degenerado (cantidad total no positiva): se conserva el precio nuevo
+                // provisto para no dividir por cero ni producir NaN/Infinity.
+                incoming.purchasePrice
+            }
             existing.copy(
-                companyName = companyName,
+                companyName = incoming.companyName,
                 quantity = mergedQuantity,
                 purchasePrice = mergedPurchasePrice,
-                currentPrice = currentPrice,
-                currency = currency,
+                currentPrice = incoming.currentPrice,
+                currency = incoming.currency,
                 updatedAt = System.currentTimeMillis(),
             )
-        )
+        }
     }
 }
