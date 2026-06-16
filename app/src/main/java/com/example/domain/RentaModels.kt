@@ -131,8 +131,25 @@ data class ReconItem(
  * el resultado es un borrador de apoyo, NO un archivo de carga ni una declaración al SII.
  */
 object RentaDisclaimer {
+    /** Disclaimer base (se mantiene literal por compatibilidad con consumidores/tests). */
     const val TEXT: String =
         "Borrador para revisar con tu contador; no se presenta directo al SII."
+
+    /** No constituye asesoría (posicionamiento legal: Rinde no asesora). */
+    const val NOT_ADVICE: String =
+        "Información referencial e ilustrativa; no constituye asesoría legal, contable ni tributaria."
+
+    /** Rinde nunca presenta ni firma: el usuario declara en su propia cuenta del SII. */
+    const val USER_FILES: String =
+        "Rinde no presenta ni firma ante el SII. Ingresa estos valores en tu cuenta del SII (sii.cl)."
+
+    /**
+     * Disclaimer VERSIONADO por año tributario (la norma, topes y UTM/UF cambian cada año).
+     * Toda salida orientada al usuario debería portar esta versión.
+     */
+    fun forYear(taxYear: Int): String =
+        "Borrador referencial del año tributario $taxYear, según la normativa vigente y los datos " +
+            "que confirmaste. $NOT_ADVICE $USER_FILES"
 }
 
 /**
