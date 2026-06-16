@@ -1,0 +1,22 @@
+{
+  "_meta": {
+    "descripcion": "Parámetros tributarios para el motor RentaCalculator (Rinde). NUNCA hardcodear en código: editar aquí.",
+    "anio_tributario": 2026,
+    "_ADVERTENCIA": "Valores SEMILLA de ejemplo. REEMPLAZAR por cifras oficiales antes de usar en serio.",
+    "fuentes": {
+      "uta": "SII — valores y fechas, UTM/UTA del periodo (sii.cl)",
+      "ipc": "INE — índice IPC mensual base anual vigente (ine.gob.cl)",
+      "art107": "Art. 107 LIR / Ley 21.420 — régimen de mayor valor con presencia bursátil"
+    }
+  },
+  "utaClp": 800000.0,
+  "art107Rate": 0.10,
+  "noRentaThresholdUta": 10.0,
+  "ipcIndex": {
+    "_nota": "Índice IPC por mes 'YYYY-MM'. Completar con la serie oficial INE. Ejemplo ilustrativo:",
+    "2023-12": 100.0,
+    "2024-06": 102.4,
+    "2024-12": 104.9,
+    "2025-02": 105.6
+  }
+}
