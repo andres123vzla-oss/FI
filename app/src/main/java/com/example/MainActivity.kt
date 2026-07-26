@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Settings
@@ -67,6 +68,7 @@ import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.MovimientosScreen
 import com.example.ui.screens.PortafolioScreen
 import com.example.ui.screens.PresupuestoScreen
+import com.example.ui.screens.RentaScreen
 import com.example.ui.components.LocalAmountsHidden
 import com.example.ui.theme.LocalReducedMotion
 import com.example.ui.theme.Motion
@@ -229,6 +231,7 @@ sealed class BottomNavItem(val route: String, val title: String, val icon: Image
     object Presupuesto : BottomNavItem("presupuesto", "Presupuesto", Icons.Default.TrackChanges, "bottom_tab_presupuesto")
     object Portafolio : BottomNavItem("portafolio", "Portafolio", Icons.AutoMirrored.Filled.ShowChart, "bottom_tab_portafolio")
     object Ajustes : BottomNavItem("ajustes", "Ajustes", Icons.Default.Settings, "bottom_tab_ajustes")
+    object Renta : BottomNavItem("renta", "Renta", Icons.Default.Description, "bottom_tab_renta")
 }
 
 @Composable
@@ -246,7 +249,8 @@ fun MainAppShell() {
         BottomNavItem.Movimientos,
         BottomNavItem.Presupuesto,
         BottomNavItem.Portafolio,
-        BottomNavItem.Ajustes
+        BottomNavItem.Ajustes,
+        BottomNavItem.Renta
     )
 
     Scaffold(
@@ -392,6 +396,9 @@ fun MainAppShell() {
             }
             composable(BottomNavItem.Ajustes.route) {
                 AjustesScreen(viewModel = viewModel)
+            }
+            composable(BottomNavItem.Renta.route) {
+                RentaScreen(viewModel = viewModel)
             }
         }
     }
