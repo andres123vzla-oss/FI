@@ -2,12 +2,9 @@
 .gradle
 .kotlin
 /local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
+# Config del IDE fuera del control de versiones (se retiró completa del repo al pasar el
+# proyecto a uso personal; Android Studio la regenera localmente).
+/.idea/
 .DS_Store
 /build
 /captures

@@ -28,7 +28,13 @@
       "Bash(/c/Users/andre/AppData/Local/Android/Sdk/platform-tools/adb.exe logcat *)",
       "Bash(unzip -l app/build/outputs/apk/debug/app-debug.apk)",
       "Bash([ -f \"$F\" ])",
-      "Read(//c/Users/andre/.gradle/**)"
+      "Read(//c/Users/andre/.gradle/**)",
+      "Read(//c/Users/andre/.claude/projects/C--Users-andre-FI-suite/08797268-ca73-43b7-8e78-796cbde8dfda/tool-results//**)",
+      "Bash(cp webfetch-1781630572883-vwn8n1.bin rinde.gz)",
+      "Bash(gzip -l rinde.gz)",
+      "Bash(tar tzf *)",
+      "Bash(mkdir -p rinde_handoff)",
+      "Bash(tar xzf *)"
     ]
   }
 }
