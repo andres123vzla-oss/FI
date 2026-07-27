@@ -34,6 +34,7 @@ class BackupCodecTest {
                 categoryName = "Alimentación",
                 description = "Harina, jamón y \"queso\"",
                 amount = 12_000_000.55, createdAt = 111L, updatedAt = 222L,
+                notionPageId = "pg-tx-7", // v3: el id de página espejo también viaja
             ),
             TransactionEntity(
                 id = 9, type = "INCOME", date = "2026-05-01",
@@ -78,11 +79,13 @@ class BackupCodecTest {
     }
 
     @Test
-    fun `payload v1 sin clave recurring importa lista vacia (compatibilidad)`() {
-        val v1 = """{"transactions":[],"categories":[],"budgets":[],"investments":[]}"""
+    fun `payload v1-v2 sin claves nuevas importa con defaults (compatibilidad)`() {
+        val v1 = """{"transactions":[{"id":1,"type":"INCOME","date":"2026-01-01",
+            "categoryName":"Sueldo","description":"x","amount":1.0,"createdAt":1,"updatedAt":1}],
+            "categories":[],"budgets":[],"investments":[]}"""
         val decoded = BackupCodec.decodePayload(v1.toByteArray(Charsets.UTF_8))
         assertTrue(decoded.recurring.isEmpty())
-        assertTrue(decoded.isEmpty)
+        assertEquals(null, decoded.transactions.first().notionPageId)
     }
 
     @Test
@@ -92,7 +95,7 @@ class BackupCodecTest {
         val text = BackupCodec.encodeContainer(sealed, createdAtEpochMs = 1_753_500_000_000L, schemaVersion = 3)
 
         val container = BackupCodec.decodeContainer(text)
-        assertEquals(2, container.formatVersion) // P1-1: formato v2 (con recurrentes)
+        assertEquals(3, container.formatVersion) // v3: recurrentes + notionPageId
         assertEquals(1_753_500_000_000L, container.createdAtEpochMs)
         assertEquals(3, container.schemaVersion)
         assertEquals(sealed.kdf.algorithm, container.sealed.kdf.algorithm)
@@ -121,7 +124,7 @@ class BackupCodecTest {
         val pass = "passphrase-de-prueba".toCharArray()
         val sealed = BackupCrypto.seal(BackupCodec.encodePayload(snapshot), pass)
         val futuro = BackupCodec.encodeContainer(sealed, 0L, 3)
-            .replace("\"formatVersion\": 2", "\"formatVersion\": 99")
+            .replace("\"formatVersion\": 3", "\"formatVersion\": 99")
         val e = assertThrows(BackupFormatException::class.java) {
             BackupCodec.decodeContainer(futuro)
         }

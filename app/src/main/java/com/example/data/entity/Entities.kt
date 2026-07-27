@@ -14,6 +14,8 @@ data class TransactionEntity(
     val amount: Double,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
+    /** Sync Notion: id de la página espejo en Notion (null = aún no sincronizada). */
+    val notionPageId: String? = null,
 )
 
 // ARQ2-05: índice único en (name, type) — sin él, addCategory permitía dos "Comida" idénticas
@@ -43,7 +45,9 @@ data class BudgetEntity(
     val categoryName: String, // Links to CategoryEntity.name
     val month: Int, // 1 to 12
     val year: Int,
-    val plannedAmount: Double
+    val plannedAmount: Double,
+    /** Sync Notion: id de la página espejo en Notion (null = aún no sincronizada). */
+    val notionPageId: String? = null,
 )
 
 /**
@@ -68,6 +72,8 @@ data class RecurringRuleEntity(
     val lastMonth: Int, // 1..12
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
+    /** Sync Notion: id de la página espejo en Notion (null = aún no sincronizada). */
+    val notionPageId: String? = null,
 )
 
 // A3: índice único en ticker como red de seguridad contra duplicados. La fusión/dedupe real
@@ -87,4 +93,6 @@ data class InvestmentEntity(
     val currency: String = "USD",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
+    /** Sync Notion: id de la página espejo en Notion (null = aún no sincronizada). */
+    val notionPageId: String? = null,
 )

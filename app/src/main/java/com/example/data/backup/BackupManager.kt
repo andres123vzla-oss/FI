@@ -102,11 +102,12 @@ class BackupManager(private val repository: FinanceRepository) {
     companion object {
         /**
          * Versión del esquema Room que produce este export. DEBE avanzar junto con
-         * `AppDatabase.version` (v4 hoy: P1-1 añadió recurring_rules); el import rechaza
+         * `AppDatabase.version` (v5 hoy: sync Notion añadió notionPageId); el import rechaza
          * respaldos de esquemas más nuevos. Los esquemas antiguos (< actual) se aceptan: el
-         * códec trata las claves nuevas como opcionales (p. ej. "recurring" vacía en v1).
+         * códec trata las claves nuevas como opcionales (p. ej. "recurring" vacía en v1,
+         * notionPageId null en v1/v2).
          */
-        const val CURRENT_SCHEMA_VERSION = 4
+        const val CURRENT_SCHEMA_VERSION = 5
 
         /** Tope de lectura: muy por encima de cualquier respaldo personal real (~KB). */
         const val MAX_FILE_BYTES = 32 * 1024 * 1024

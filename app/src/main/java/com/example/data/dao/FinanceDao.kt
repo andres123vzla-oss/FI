@@ -202,6 +202,22 @@ interface FinanceDao {
         updatedRules.forEach { updateRecurring(it) }
     }
 
+    // --- Sync Notion: guardar el id de página espejo (update PARCIAL, patrón ARQ2-04) ---
+    // Solo toca notionPageId: la sync corre sobre un snapshot y un @Update de fila completa
+    // pisaría ediciones concurrentes del usuario (lost update).
+
+    @Query("UPDATE transactions SET notionPageId = :pageId WHERE id = :id")
+    suspend fun setTransactionNotionId(id: Int, pageId: String)
+
+    @Query("UPDATE budgets SET notionPageId = :pageId WHERE id = :id")
+    suspend fun setBudgetNotionId(id: Int, pageId: String)
+
+    @Query("UPDATE investments SET notionPageId = :pageId WHERE id = :id")
+    suspend fun setInvestmentNotionId(id: Int, pageId: String)
+
+    @Query("UPDATE recurring_rules SET notionPageId = :pageId WHERE id = :id")
+    suspend fun setRecurringNotionId(id: Int, pageId: String)
+
     // --- Operaciones atómicas (A2: seed/clear multi-tabla sin estado inconsistente) ---
 
     /**

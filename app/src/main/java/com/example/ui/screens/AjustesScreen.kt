@@ -18,6 +18,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -38,6 +39,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -58,6 +61,8 @@ import com.example.ui.theme.LocalFinanceColors
 import com.example.ui.viewmodel.BackupUiState
 import com.example.ui.viewmodel.BackupViewModel
 import com.example.ui.viewmodel.FinanceViewModel
+import com.example.ui.viewmodel.NotionSyncUiState
+import com.example.ui.viewmodel.NotionSyncViewModel
 import com.example.util.IconMapper
 import kotlinx.coroutines.launch
 
@@ -68,6 +73,7 @@ fun AjustesScreen(
     modifier: Modifier = Modifier,
     securityViewModel: SecurityViewModel = viewModel(),
     backupViewModel: BackupViewModel = viewModel(),
+    notionViewModel: NotionSyncViewModel = viewModel(),
 ) {
     val categories by viewModel.allCategories.collectAsState()
     val isPinSet by securityViewModel.isPinSet.collectAsState()
@@ -110,6 +116,29 @@ fun AjustesScreen(
     val recurringRules by viewModel.allRecurring.collectAsState()
     var showRecurringDialog by rememberSaveable { mutableStateOf(false) }
     var recurringToDeleteId by rememberSaveable { mutableStateOf<Int?>(null) }
+
+    // --- Sync Notion (one-way, manual) ---
+    val notionState by notionViewModel.state.collectAsState()
+    val hasNotionToken by notionViewModel.hasToken.collectAsState()
+    val lastNotionSyncAt by notionViewModel.lastSyncAt.collectAsState()
+    var showNotionTokenDialog by rememberSaveable { mutableStateOf(false) }
+    var showNotionClearConfirm by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(notionState) {
+        when (val s = notionState) {
+            is NotionSyncUiState.Success -> {
+                haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                snackbarHostState.showSnackbar(s.message)
+                notionViewModel.acknowledgeResult()
+            }
+            is NotionSyncUiState.Error -> {
+                haptics.performHapticFeedback(HapticFeedbackType.Reject)
+                snackbarHostState.showSnackbar(s.message)
+                notionViewModel.acknowledgeResult()
+            }
+            else -> {}
+        }
+    }
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri -> if (uri != null) pendingExportUri = uri.toString() }
@@ -354,6 +383,99 @@ fun AjustesScreen(
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Nueva regla", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            // --- SYNC NOTION (one-way; el usuario asumió explícitamente el tradeoff de nube) ---
+            Text(
+                "Notion",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp)
+            )
+            FinanceCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "Espejo de tus finanzas en tu página de Notion. La app es la fuente de verdad: la sync solo EMPUJA cambios (jamás lee ni borra en Notion). Lo sincronizado sale del cifrado local hacia la nube de Notion.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Surface(
+                        onClick = { notionViewModel.syncNow() },
+                        enabled = hasNotionToken && notionState !is NotionSyncUiState.Working,
+                        modifier = Modifier.fillMaxWidth().testTag("notion_sync_row"),
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        shape = MaterialTheme.shapes.medium,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(MaterialTheme.shapes.small)
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Sync, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            }
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Sincronizar con Notion ahora",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                                Text(
+                                    if (hasNotionToken) lastNotionSyncLabel(lastNotionSyncAt)
+                                    else "Configura tu token de integración para activar la sync.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    (notionState as? NotionSyncUiState.Working)?.let { working ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                            Text(
+                                working.label,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            onClick = { showNotionTokenDialog = true },
+                            modifier = Modifier.testTag("notion_token_button")
+                        ) {
+                            Text(
+                                if (hasNotionToken) "Cambiar token…" else "Configurar token…",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        if (hasNotionToken) {
+                            TextButton(
+                                onClick = { showNotionClearConfirm = true },
+                                modifier = Modifier.testTag("notion_clear_button")
+                            ) {
+                                Text("Quitar token", color = finance.negative, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
             }
@@ -720,6 +842,36 @@ fun AjustesScreen(
         )
     }
 
+    // --- Sync Notion: diálogos ---
+    if (showNotionTokenDialog) {
+        NotionTokenDialog(
+            onDismiss = { showNotionTokenDialog = false },
+            onConfirm = { token ->
+                showNotionTokenDialog = false
+                notionViewModel.saveToken(token)
+            },
+        )
+    }
+    if (showNotionClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showNotionClearConfirm = false },
+            title = { Text("¿Quitar el token de Notion?", fontWeight = FontWeight.Bold) },
+            text = { Text("La sync quedará desactivada hasta que pegues un token de nuevo. Lo ya sincronizado permanece en Notion.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showNotionClearConfirm = false
+                        notionViewModel.clearToken()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = finance.negative, contentColor = MaterialTheme.colorScheme.onError)
+                ) { Text("Quitar", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNotionClearConfirm = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
     // --- P1-1: diálogos de recurrentes ---
     if (showRecurringDialog) {
         RecurringRuleDialog(
@@ -809,6 +961,77 @@ fun AjustesScreen(
             }
         )
     }
+}
+
+/** Etiqueta de última sync con Notion (misma convención que el recordatorio de respaldo). */
+private fun lastNotionSyncLabel(lastSyncAt: Long?): String {
+    if (lastSyncAt == null) return "Aún no has sincronizado."
+    val days = ((System.currentTimeMillis() - lastSyncAt) / 86_400_000L).coerceAtLeast(0L)
+    return when (days) {
+        0L -> "Última sync: hoy."
+        1L -> "Última sync: ayer."
+        else -> "Última sync: hace $days días."
+    }
+}
+
+/**
+ * Token de integración de Notion. NO usa rememberSaveable: es un secreto y no debe escribirse
+ * en el Bundle de instancia. El String de Compose es residuo aceptado (SEC2-08); la copia
+ * persistida viaja ENVUELTA con el Keystore (SecurityPreferences.setNotionToken).
+ */
+@Composable
+private fun NotionTokenDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var token by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Token de integración de Notion", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "1) Crea una integración interna en notion.so/my-integrations. " +
+                        "2) En tu página 'Finanzas' de Notion, compártela con esa integración. " +
+                        "3) Pega aquí el token. Se guarda cifrado con el Keystore del teléfono.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+                // UX2-08: error siempre compuesto + liveRegion para que TalkBack lo anuncie.
+                Text(
+                    error ?: "",
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                )
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = { token = it },
+                    label = { Text("Token") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("notion_token_field")
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (token.isBlank()) {
+                        error = "Pega el token de tu integración."
+                    } else {
+                        onConfirm(token)
+                    }
+                },
+                modifier = Modifier.testTag("notion_token_confirm")
+            ) { Text("Guardar", fontWeight = FontWeight.Bold) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
+    )
 }
 
 /**

@@ -144,6 +144,12 @@ class FinanceRepository(private val dao: FinanceDao) {
     suspend fun updateRecurringRule(rule: RecurringRuleEntity) = dao.updateRecurring(rule)
     suspend fun deleteRecurringRuleById(id: Int) = dao.deleteRecurringById(id)
 
+    // --- Sync Notion: persistir el id de página espejo (updates parciales, ARQ2-04) ---
+    suspend fun setTransactionNotionId(id: Int, pageId: String) = dao.setTransactionNotionId(id, pageId)
+    suspend fun setBudgetNotionId(id: Int, pageId: String) = dao.setBudgetNotionId(id, pageId)
+    suspend fun setInvestmentNotionId(id: Int, pageId: String) = dao.setInvestmentNotionId(id, pageId)
+    suspend fun setRecurringNotionId(id: Int, pageId: String) = dao.setRecurringNotionId(id, pageId)
+
     /**
      * P1-1: una pasada del generador hasta "hoy". Lee las reglas, calcula lo pendiente
      * ([RecurringGenerator], puro) y lo aplica en la transacción atómica del DAO

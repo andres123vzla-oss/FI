@@ -63,6 +63,12 @@ class SecurityPreferences(private val context: Context) {
         // No es dato sensible: solo un timestamp; no requiere envoltura del Keystore.
         val LAST_BACKUP_AT = longPreferencesKey("last_backup_at")
 
+        // Sync Notion: el token de integración se guarda ENVUELTO con la clave del Keystore
+        // (formato "enc:iv:ct", igual que el verificador del PIN — SEC-05: da acceso de
+        // escritura al espejo del usuario). El timestamp de última sync no es sensible.
+        val NOTION_TOKEN = stringPreferencesKey("notion_token")
+        val LAST_NOTION_SYNC_AT = longPreferencesKey("last_notion_sync_at")
+
         // SEC2-04: token del gate biométrico (cifrado con fi_bio_gate_key, NO con la wrap key:
         // su seguridad la da el auth-binding del Keystore, no la envoltura).
         val BIO_GATE_IV = stringPreferencesKey("bio_gate_iv")
@@ -141,6 +147,14 @@ class SecurityPreferences(private val context: Context) {
     /** Momento (epoch ms) del último respaldo exportado con éxito; `null` si nunca se exportó. */
     val lastBackupAt: Flow<Long?> =
         context.securityDataStore.data.map { it[Keys.LAST_BACKUP_AT] }
+
+    /** ¿Hay token de Notion guardado? (Jamás expone el token.) */
+    val hasNotionToken: Flow<Boolean> =
+        context.securityDataStore.data.map { it[Keys.NOTION_TOKEN] != null }
+
+    /** Última sync exitosa con Notion (epoch ms); `null` si nunca. */
+    val lastNotionSyncAt: Flow<Long?> =
+        context.securityDataStore.data.map { it[Keys.LAST_NOTION_SYNC_AT] }
 
     /**
      * Lee el verificador del PIN distinguiendo "no hay PIN", "disponible" y "no descifrable"
@@ -271,6 +285,35 @@ class SecurityPreferences(private val context: Context) {
     /** P0 respaldo: registra el momento del último export exitoso. */
     suspend fun setLastBackupAt(epochMs: Long) {
         context.securityDataStore.edit { it[Keys.LAST_BACKUP_AT] = epochMs }
+    }
+
+    // --- Sync Notion (token SIEMPRE envuelto con la clave del Keystore, jamás en claro) ---
+
+    /** Guarda el token de integración ENVUELTO (AES/GCM + Keystore, mismo wrap del PIN). */
+    suspend fun setNotionToken(token: String) {
+        val wrapped = wrap(token)
+        context.securityDataStore.edit { it[Keys.NOTION_TOKEN] = wrapped }
+    }
+
+    /**
+     * Devuelve el token en claro para USO INMEDIATO (jamás loguearlo ni retenerlo), o `null`
+     * si no hay token o el Keystore no puede descifrarlo (tratar como "sin configurar").
+     */
+    suspend fun getNotionToken(): String? {
+        val stored = context.securityDataStore.data.first()[Keys.NOTION_TOKEN] ?: return null
+        return unwrap(stored)
+    }
+
+    /** Elimina el token y el registro de última sync. */
+    suspend fun clearNotionToken() {
+        context.securityDataStore.edit {
+            it.remove(Keys.NOTION_TOKEN)
+            it.remove(Keys.LAST_NOTION_SYNC_AT)
+        }
+    }
+
+    suspend fun setLastNotionSyncAt(epochMs: Long) {
+        context.securityDataStore.edit { it[Keys.LAST_NOTION_SYNC_AT] = epochMs }
     }
 
     // --- Envoltura AES/GCM del verificador del PIN con clave del Android Keystore (SEC-05) ---

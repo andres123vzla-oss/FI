@@ -12,6 +12,7 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -47,15 +48,15 @@ class MigrationTest {
     }
 
     /** Localiza el esquema exportado tanto si el working dir es `app/` como la raíz del repo. */
-    private fun schemaV3(): File = listOf(
-        File("schemas/com.example.data.database.AppDatabase/3.json"),
-        File("app/schemas/com.example.data.database.AppDatabase/3.json"),
+    private fun schemaFile(version: Int): File = listOf(
+        File("schemas/com.example.data.database.AppDatabase/$version.json"),
+        File("app/schemas/com.example.data.database.AppDatabase/$version.json"),
     ).firstOrNull { it.exists() }
-        ?: error("No se encontró el esquema exportado 3.json (¿se movió app/schemas?)")
+        ?: error("No se encontró el esquema exportado $version.json (¿se movió app/schemas?)")
 
-    /** Crea la BD v3 REAL: DDL de entidades e índices + setupQueries (identity hash incluido). */
-    private fun createV3Database() {
-        val database = JSONObject(schemaV3().readText(Charsets.UTF_8)).getJSONObject("database")
+    /** Crea una BD REAL en [version]: DDL de entidades e índices + setupQueries (identity hash). */
+    private fun createDatabase(version: Int) {
+        val database = JSONObject(schemaFile(version).readText(Charsets.UTF_8)).getJSONObject("database")
         val file = context.getDatabasePath(dbName).apply { parentFile?.mkdirs() }
         val db = SQLiteDatabase.openOrCreateDatabase(file, null)
         try {
@@ -78,15 +79,15 @@ class MigrationTest {
             for (i in 0 until setup.length()) {
                 db.execSQL(setup.getString(i))
             }
-            db.version = 3
+            db.version = version
         } finally {
             db.close()
         }
     }
 
     @Test
-    fun `migracion 3 a 4 conserva los datos y deja recurring_rules utilizable`() = runBlocking {
-        createV3Database()
+    fun `migracion en cadena 3 a 5 conserva los datos y deja recurring_rules utilizable`() = runBlocking {
+        createDatabase(3)
 
         // Datos del usuario en la v3 (SQL crudo: la app v3 real escribía estas columnas).
         SQLiteDatabase.openDatabase(
@@ -106,7 +107,7 @@ class MigrationTest {
         // hash + estructura). SIN fallback destructivo: si la migración fuera incorrecta, este
         // build() lanza en vez de borrar datos.
         val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4)
+            .addMigrations(AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5)
             .allowMainThreadQueries()
             .build()
         try {
@@ -116,6 +117,7 @@ class MigrationTest {
             val txs = dao.getAllTransactions().first()
             assertEquals(1, txs.size)
             assertEquals(421_000.0, txs.first().amount, 0.001)
+            assertNull(txs.first().notionPageId) // v5: la columna nueva llega en null
             assertEquals(1, dao.getAllInvestments().first().size)
 
             // La tabla nueva arranca vacía y es utilizable vía DAO real.
@@ -126,6 +128,41 @@ class MigrationTest {
                     amount = 458_000.0, dayOfMonth = 1, lastYear = 2026, lastMonth = 6,
                 ),
             )
+            assertEquals(1, dao.getAllRecurringOnce().size)
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun `migracion 4 a 5 agrega notionPageId a las tablas sin tocar datos`() = runBlocking {
+        createDatabase(4)
+        SQLiteDatabase.openDatabase(
+            context.getDatabasePath(dbName).path, null, SQLiteDatabase.OPEN_READWRITE,
+        ).use { raw ->
+            raw.execSQL(
+                "INSERT INTO transactions (type, date, categoryName, description, amount, createdAt, updatedAt) " +
+                    "VALUES ('EXPENSE','2026-07-01','Vivienda','Arriendo',458000.0,1,1)",
+            )
+            raw.execSQL(
+                "INSERT INTO recurring_rules (type, categoryName, description, amount, dayOfMonth, active, lastYear, lastMonth, createdAt, updatedAt) " +
+                    "VALUES ('EXPENSE','Vivienda','Arriendo',458000.0,1,1,2026,6,1,1)",
+            )
+        }
+
+        // Abrir con Room a la v5: valida el esquema migrado (identity hash + estructura).
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(AppDatabase.MIGRATION_4_5)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val dao = db.financeDao()
+            val txs = dao.getAllTransactions().first()
+            assertEquals(1, txs.size)
+            assertNull(txs.first().notionPageId)
+            // La columna es utilizable vía el update PARCIAL real de la sync.
+            dao.setTransactionNotionId(txs.first().id, "pg-123")
+            assertEquals("pg-123", dao.getAllTransactions().first().first().notionPageId)
             assertEquals(1, dao.getAllRecurringOnce().size)
         } finally {
             db.close()

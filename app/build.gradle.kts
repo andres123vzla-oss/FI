@@ -97,6 +97,8 @@ dependencies {
   implementation(libs.androidx.room.runtime)
   // Cifrado en reposo de la base de datos financiera (SQLCipher sobre el SupportSQLite de Room).
   implementation(libs.sqlcipher.android)
+  // Sync Notion (opcional, one-way): OkHttp por el método PATCH que HttpURLConnection no soporta.
+  implementation(libs.okhttp)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   testImplementation(libs.androidx.compose.ui.test.junit4)

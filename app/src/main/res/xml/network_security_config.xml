@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-   Configuración de seguridad de red. La app es offline-first; la ÚNICA conexión saliente posible
-   es la API de precios de mercado. Se prohíbe TODO tráfico en claro (HTTP): cualquier conexión
-   debe ser HTTPS, evitando interceptación/filtración de datos. Sin API key, no hay tráfico.
+   Configuración de seguridad de red. La app es offline-first; las ÚNICAS conexiones salientes
+   posibles son OPCIONALES y las activa el usuario: la API de precios de mercado (finnhub.io,
+   con MARKET_API_KEY) y la sync one-way con Notion (api.notion.com, con token de integración).
+   Se prohíbe TODO tráfico en claro (HTTP): cualquier conexión debe ser HTTPS (base-config),
+   evitando interceptación/filtración de datos. Sin key/token configurados, no hay tráfico.
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false">

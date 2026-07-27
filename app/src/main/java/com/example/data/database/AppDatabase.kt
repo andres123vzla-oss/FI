@@ -30,11 +30,13 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
     // P1-1: version 4 añade la tabla recurring_rules (movimientos recurrentes), con
     // MIGRATION_3_4 explícita testeada en MigrationTest. Al subirla se subió también
     // BackupManager.CURRENT_SCHEMA_VERSION (regla del CLAUDE.md).
+    // Sync Notion: version 5 añade la columna nullable notionPageId a las 4 tablas
+    // sincronizables (upsert sin duplicados), con MIGRATION_4_5 explícita testeada.
     // POLÍTICA (A1/SEC-09): todo incremento futuro de version DEBE traer su Migration
     // explícita test-eada, para no perder silenciosamente la base financiera del usuario.
     // ARQ2-07: exportSchema=true + room.schemaLocation para versionar los esquemas JSON
     // y poder testear migraciones con MigrationTestHelper.
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -55,6 +57,20 @@ abstract class AppDatabase : RoomDatabase() {
          *   crear el índice, o la migración fallaría con los duplicados existentes.
          * - categories: una fila por (name, type), deduplicada con el mismo criterio.
          */
+        /**
+         * Sync Notion: columna nullable `notionPageId` en las 4 tablas sincronizables, para el
+         * upsert sin duplicados (null = fila aún no espejada en Notion). ALTER TABLE simple:
+         * ningún dato existente se toca.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `transactions` ADD COLUMN `notionPageId` TEXT")
+                db.execSQL("ALTER TABLE `budgets` ADD COLUMN `notionPageId` TEXT")
+                db.execSQL("ALTER TABLE `investments` ADD COLUMN `notionPageId` TEXT")
+                db.execSQL("ALTER TABLE `recurring_rules` ADD COLUMN `notionPageId` TEXT")
+            }
+        }
+
         /**
          * P1-1: crea la tabla de reglas recurrentes. El CREATE es EXACTO al esquema que Room
          * espera para la v4 (validado por MigrationTest con el 4.json exportado): tipos,
@@ -128,7 +144,7 @@ abstract class AppDatabase : RoomDatabase() {
                         DB_NAME
                     )
                         .openHelperFactory(factory)
-                        .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
+                        .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                         // SEC-09/A1: este fallback puede borrar TODA la base financiera ante un
                         // cambio de esquema sin Migration. Se conserva como última red mientras
                         // las migraciones explícitas (addMigrations) cubren los saltos conocidos;

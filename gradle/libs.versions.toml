@@ -26,6 +26,10 @@ biometric = "1.1.0"
 sqlcipher = "4.16.0"
 robolectric = "4.16.1"
 roborazzi = "1.59.0"
+# Sync Notion: OkHttp es necesario porque HttpURLConnection no soporta PATCH (la API de Notion
+# lo exige para actualizar páginas). BLD2-07 lo había retirado por estar sin consumidor; vuelve
+# con versión actual revisada y un consumidor real (data/notion/NotionApi).
+okhttp = "4.12.0"
 
 # BLD2-07: eliminadas ~15 entradas muertas sin ningún consumidor (retrofit, okhttp 4.10.0 con
 # CVEs si alguien lo cableara, moshi, coil, firebase-* —contradecía la regla "sin Firebase"—,
@@ -65,6 +69,7 @@ kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastorePreferences" }
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
 sqlcipher-android = { group = "net.zetetic", name = "sqlcipher-android", version.ref = "sqlcipher" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 roborazzi = { group = "io.github.takahirom.roborazzi", name = "roborazzi", version.ref = "roborazzi" }
 roborazzi-compose = { group = "io.github.takahirom.roborazzi", name = "roborazzi-compose", version.ref = "roborazzi" }

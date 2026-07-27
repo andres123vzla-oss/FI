@@ -60,10 +60,11 @@ object BackupCodec {
     const val MAGIC = "FISUITE_BACKUP"
 
     /**
-     * v1: 4 tablas. v2 (P1-1): + clave "recurring" en el payload. El decode acepta ambas: un
-     * payload sin "recurring" (respaldos v1 ya exportados) importa con la lista vacía.
+     * v1: 4 tablas. v2 (P1-1): + clave "recurring". v3 (sync Notion): + campo OPCIONAL
+     * "notionPageId" por fila en las tablas sincronizables. El decode acepta TODAS las
+     * versiones anteriores: claves/campos ausentes → lista vacía / null.
      */
-    const val FORMAT_VERSION = 2
+    const val FORMAT_VERSION = 3
 
     /** Contenedor decodificado (header + bloque sellado listo para [BackupCrypto.open]). */
     class Container(
@@ -92,6 +93,7 @@ object BackupCodec {
                         .put("amount", t.amount)
                         .put("createdAt", t.createdAt)
                         .put("updatedAt", t.updatedAt)
+                        .putOpt("notionPageId", t.notionPageId)
                 )
             }
         })
@@ -117,6 +119,7 @@ object BackupCodec {
                         .put("month", b.month)
                         .put("year", b.year)
                         .put("plannedAmount", b.plannedAmount)
+                        .putOpt("notionPageId", b.notionPageId)
                 )
             }
         })
@@ -133,6 +136,7 @@ object BackupCodec {
                         .put("currency", i.currency)
                         .put("createdAt", i.createdAt)
                         .put("updatedAt", i.updatedAt)
+                        .putOpt("notionPageId", i.notionPageId)
                 )
             }
         })
@@ -151,6 +155,7 @@ object BackupCodec {
                         .put("lastMonth", r.lastMonth)
                         .put("createdAt", r.createdAt)
                         .put("updatedAt", r.updatedAt)
+                        .putOpt("notionPageId", r.notionPageId)
                 )
             }
         })
@@ -170,6 +175,7 @@ object BackupCodec {
                 amount = o.getDouble("amount"),
                 createdAt = o.getLong("createdAt"),
                 updatedAt = o.getLong("updatedAt"),
+                notionPageId = optStringOrNull(o, "notionPageId"),
             )
         }
         val categories = root.getJSONArray("categories").mapObjects { o ->
@@ -189,6 +195,7 @@ object BackupCodec {
                 month = o.getInt("month"),
                 year = o.getInt("year"),
                 plannedAmount = o.getDouble("plannedAmount"),
+                notionPageId = optStringOrNull(o, "notionPageId"),
             )
         }
         val investments = root.getJSONArray("investments").mapObjects { o ->
@@ -202,6 +209,7 @@ object BackupCodec {
                 currency = o.getString("currency"),
                 createdAt = o.getLong("createdAt"),
                 updatedAt = o.getLong("updatedAt"),
+                notionPageId = optStringOrNull(o, "notionPageId"),
             )
         }
         // P1-1 (formato v2): clave OPCIONAL — un respaldo v1 (sin "recurring") importa con vacía.
@@ -218,6 +226,7 @@ object BackupCodec {
                 lastMonth = o.getInt("lastMonth"),
                 createdAt = o.getLong("createdAt"),
                 updatedAt = o.getLong("updatedAt"),
+                notionPageId = optStringOrNull(o, "notionPageId"),
             )
         } ?: emptyList()
         BackupSnapshot(transactions, categories, budgets, investments, recurring)
@@ -306,6 +315,10 @@ object BackupCodec {
             throw BackupFormatException("Los parámetros del respaldo son inválidos.", e)
         }
     }
+
+    /** String opcional: null si la clave falta o es JSON null (compatibilidad v1/v2). */
+    private fun optStringOrNull(o: JSONObject, key: String): String? =
+        if (o.has(key) && !o.isNull(key)) o.getString(key) else null
 
     private fun decodeB64(value: String, field: String): ByteArray = try {
         Base64.decode(value, Base64.NO_WRAP)
