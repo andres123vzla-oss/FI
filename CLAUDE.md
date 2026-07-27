@@ -96,8 +96,26 @@ totales de referencia y la cartera. Passphrase incorrecta debe fallar con mensaj
 intacta (ya blindado por `BackupRoundTripTest`).
 
 **P1 — fricción diaria** (recurrentes ✅ hechas)
-1. Importar cartola bancaria CSV con mapeo de columnas y detección de duplicados.
-2. Entrada rápida: repetir último movimiento, categoría sugerida por descripción; checkbox
+1. **Sync app→Notion** — SIGUIENTE (elegida por el usuario el 27-jul-2026 como alimentación
+   del espejo; el espejo YA está creado en su página Notion "Finanzas"). Diseño:
+   - One-way push vía API oficial (`api.notion.com`, HTTPS ya permitido por el base-config;
+     actualizar el comentario de `network_security_config.xml`).
+   - Token de integración pegado por el usuario en Ajustes y guardado CIFRADO con el patrón
+     wrap del Keystore de `SecurityPreferences` (jamás en claro, jamás logueado).
+   - Botón "Sincronizar con Notion" en Ajustes + "última sync"; sin sync silenciosa de fondo.
+   - Upsert sin duplicados: columna `notionPageId` en `transactions` → BD v5 + `MIGRATION_4_5`
+     testeada + respaldo formato v3 + `CURRENT_SCHEMA_VERSION = 5`.
+   - Bases destino (data sources Notion): Movimientos
+     `e8f786d5-2740-4a10-a564-bc9d10438147`, Recurrentes
+     `f09efb43-a9e5-42bb-9236-ef842abfa40c`, Presupuesto
+     `eafe972e-c3cc-4368-a347-799809e6da84`, Portafolio
+     `237b9f3d-b190-4e5f-81ac-90398555b696`. Propiedades: Descripción (title), Fecha (date),
+     Tipo (Ingreso/Gasto), Categoría (select con las de la app), Monto CLP (number
+     chilean_peso), Origen (App/Recurrente/Manual).
+   - Tradeoff asumido explícitamente por el usuario: lo sincronizado sale del cifrado local
+     hacia la nube de Notion.
+2. Importar cartola bancaria CSV con mapeo de columnas y detección de duplicados.
+3. Entrada rápida: repetir último movimiento, categoría sugerida por descripción; checkbox
    "repetir cada mes" en el diálogo de agregar movimiento (crea la regla desde Movimientos).
 
 **P1 — Renta útil**
