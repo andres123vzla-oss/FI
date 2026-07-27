@@ -22,8 +22,8 @@ para sesiones de trabajo está en `docs/PROMPT_FABLE5.md`.
 ## Prioridades (en orden)
 
 1. **Compilación estable y tests verdes** — el proyecto siempre compila; los tests unitarios
-   (hoy 134: 38 del motor Rinde, 16 de respaldo, 6 de recurrentes y 1 de migración entre
-   ellos) nunca quedan rojos.
+   (hoy 144: 38 del motor Rinde, 16 de respaldo, 6 de recurrentes, 2 de migraciones y 9 de la
+   sync Notion entre ellos) nunca quedan rojos.
 2. **Nunca perder datos** — respaldo/restauración cifrados y exportables (IMPLEMENTADO:
    tarjeta "Respaldo" en Ajustes → Administración y Datos); toda subida de versión de Room
    lleva `Migration` explícita y testeada (esquemas versionados en `app/schemas/`); ningún
@@ -70,9 +70,18 @@ tipo/categoría/monto/día, activar/desactivar, eliminar). `data/recurring/Recur
 curso solo al llegar el día, ancla `lastYear/lastMonth` idempotente (reabrir jamás duplica),
 aplicación atómica en `FinanceDao.applyGenerated`. Se dispara al abrir la app y al cambiar el
 día (`refreshDateTick`). Reactivar una regla re-ancla a hoy (no genera los meses apagados).
-BD **v4** con `MIGRATION_3_4` testeada (MigrationTest construye la v3 desde el `3.json`
+BD con `MIGRATION_3_4` testeada (MigrationTest construye la versión anterior desde el JSON
 exportado y deja que Room valide el esquema migrado — en AGP 9 los assets de host tests no se
 pueden inyectar, por eso no se usa MigrationTestHelper).
+
+**Sync app→Notion (hecho 27-jul-2026):** Ajustes → "Notion". One-way push MANUAL (botón; sin
+sync de fondo) de las 4 tablas a las bases espejo vía `data/notion/` (`NotionApi` con OkHttp —
+PATCH obligatorio —, `NotionMapper` puro testeado, `NotionSyncManager` con upsert REANUDABLE:
+cada fila guarda su `notionPageId` en cuanto se crea, un fallo a mitad jamás duplica). Token
+de integración ENVUELTO con el Keystore (`SecurityPreferences`, patrón del PIN), jamás
+logueado. BD **v5** (`MIGRATION_4_5`: columna `notionPageId` en las 4 tablas) y respaldo
+**formato v3** (v1/v2 se importan igual). El "Gastado CLP" del presupuesto espejo se calcula
+real desde los movimientos del mes.
 
 Brechas conocidas, por gravedad:
 
@@ -95,27 +104,15 @@ E2E manual en emulador: exportar → "Borrar todos los datos" → importar → v
 totales de referencia y la cartera. Passphrase incorrecta debe fallar con mensaje claro y BD
 intacta (ya blindado por `BackupRoundTripTest`).
 
-**P1 — fricción diaria** (recurrentes ✅ hechas)
-1. **Sync app→Notion** — SIGUIENTE (elegida por el usuario el 27-jul-2026 como alimentación
-   del espejo; el espejo YA está creado en su página Notion "Finanzas"). Diseño:
-   - One-way push vía API oficial (`api.notion.com`, HTTPS ya permitido por el base-config;
-     actualizar el comentario de `network_security_config.xml`).
-   - Token de integración pegado por el usuario en Ajustes y guardado CIFRADO con el patrón
-     wrap del Keystore de `SecurityPreferences` (jamás en claro, jamás logueado).
-   - Botón "Sincronizar con Notion" en Ajustes + "última sync"; sin sync silenciosa de fondo.
-   - Upsert sin duplicados: columna `notionPageId` en `transactions` → BD v5 + `MIGRATION_4_5`
-     testeada + respaldo formato v3 + `CURRENT_SCHEMA_VERSION = 5`.
-   - Bases destino (data sources Notion): Movimientos
-     `e8f786d5-2740-4a10-a564-bc9d10438147`, Recurrentes
-     `f09efb43-a9e5-42bb-9236-ef842abfa40c`, Presupuesto
-     `eafe972e-c3cc-4368-a347-799809e6da84`, Portafolio
-     `237b9f3d-b190-4e5f-81ac-90398555b696`. Propiedades: Descripción (title), Fecha (date),
-     Tipo (Ingreso/Gasto), Categoría (select con las de la app), Monto CLP (number
-     chilean_peso), Origen (App/Recurrente/Manual).
-   - Tradeoff asumido explícitamente por el usuario: lo sincronizado sale del cifrado local
-     hacia la nube de Notion.
-2. Importar cartola bancaria CSV con mapeo de columnas y detección de duplicados.
-3. Entrada rápida: repetir último movimiento, categoría sugerida por descripción; checkbox
+**P1 — fricción diaria** (recurrentes ✅ · sync Notion ✅)
+La sync usa `database_id` (API 2022-06-28) de las bases espejo: Movimientos
+`bd4e9cfe26f94a4ea3521afd096ee44f`, Recurrentes `eecd3c12c005420aadf2ac9f2c1cf8f2`,
+Presupuesto `5d78162480114a79ad6f6b7bda3679ec`, Portafolio `0d4ea29fd73f48da97d8e3a3b314693d`
+(constantes en `NotionSyncConfig`). Tradeoff de nube asumido explícitamente por el usuario.
+Falta solo su paso manual: crear la integración en notion.so/my-integrations, compartirle la
+página "Finanzas" y pegar el token en Ajustes.
+1. Importar cartola bancaria CSV con mapeo de columnas y detección de duplicados — SIGUIENTE.
+2. Entrada rápida: repetir último movimiento, categoría sugerida por descripción; checkbox
    "repetir cada mes" en el diálogo de agregar movimiento (crea la regla desde Movimientos).
 
 **P1 — Renta útil**
@@ -144,9 +141,10 @@ intacta (ya blindado por `BackupRoundTripTest`).
 - `security/` — `DatabaseKeyProvider` (Keystore + AES/GCM), `BackupCrypto` (PBKDF2 + AES/GCM
   del respaldo, JVM puro), `PinHasher`, `SecurityViewModel`, `AppLockManager`, `BiometricGate`,
   `SecurityPreferences`.
-- `data/` — Room (`AppDatabase` v4, migraciones explícitas, política de no-borrado silencioso),
-  `FinanceDao`, `FinanceRepository`, `backup/` (`BackupCodec` formato v2 + `BackupManager`
-  export/import atómico), `recurring/RecurringGenerator` (puro), mercado (Finnhub/manual),
+- `data/` — Room (`AppDatabase` v5, migraciones explícitas, política de no-borrado silencioso),
+  `FinanceDao`, `FinanceRepository`, `backup/` (`BackupCodec` formato v3 + `BackupManager`
+  export/import atómico), `recurring/RecurringGenerator` (puro), `notion/` (`NotionApi` OkHttp
+  + `NotionMapper` + `NotionSyncManager` upsert reanudable), mercado (Finnhub/manual),
   `OllamaReasoningService`.
 - `ui/` — pantallas Compose, `RentaPresenter` (presentación pura testeable), `BackupViewModel`
   (flujo de respaldo, separado del `FinanceViewModel`), componentes compartidos
