@@ -22,10 +22,12 @@ para sesiones de trabajo está en `docs/PROMPT_FABLE5.md`.
 ## Prioridades (en orden)
 
 1. **Compilación estable y tests verdes** — el proyecto siempre compila; los tests unitarios
-   (hoy 108, de ellos 38 del motor Rinde) nunca quedan rojos.
-2. **Nunca perder datos** — respaldo/restauración cifrados y exportables (P0 del backlog);
-   toda subida de versión de Room lleva `Migration` explícita y testeada (esquemas versionados
-   en `app/schemas/`); ningún borrado silencioso.
+   (hoy 126: 38 del motor Rinde y 18 de respaldo/presentador entre ellos) nunca quedan rojos.
+2. **Nunca perder datos** — respaldo/restauración cifrados y exportables (IMPLEMENTADO:
+   tarjeta "Respaldo" en Ajustes → Administración y Datos); toda subida de versión de Room
+   lleva `Migration` explícita y testeada (esquemas versionados en `app/schemas/`); ningún
+   borrado silencioso. Al subir `AppDatabase.version`, subir también
+   `BackupManager.CURRENT_SCHEMA_VERSION`.
 3. **Seguridad local antes de mostrar datos** — nada sensible visible sin desbloqueo.
 4. **Cálculos financieros correctos** — exactitud numérica y casos límite controlados.
 5. **Baja fricción de registro diario** — registrar un gasto debe costar segundos.
@@ -53,49 +55,56 @@ StrongBox si existe), App Lock con PIN (`CharArray` borrable) y biometría con `
 `FLAG_SECURE`, 6 pestañas (Resumen, Movimientos, Presupuesto, Portafolio, Ajustes, Renta),
 motor tributario puro en `domain/` con 38 tests.
 
+**Respaldo cifrado exportable (P0, hecho 26-jul-2026):** Ajustes → Administración y Datos.
+Export/import de las 4 tablas con passphrase del usuario (PBKDF2 + AES-256/GCM, formato v1 de
+`BackupCodec`), archivo vía SAF, import atómico todo-o-nada que jamás toca la BD ante error,
+recordatorio "último respaldo hace N días" y reautenticación por PIN para importar. Además:
+háptica (desbloqueo, destructivas, copiado), pull-to-refresh en Portafolio, combines tipados
+en `FinanceViewModel`, `LocalClipboard` (API nueva) y pares de tokens `onPrimary`/`onError`.
+
 Brechas conocidas, por gravedad:
 
 | # | Brecha | Detalle |
 |---|--------|---------|
-| 1 | **Sin respaldo: pérdida total si se pierde el teléfono** | `allowBackup=false`, el backup de Android excluye la BD, la clave del Keystore no sale del equipo y no existe ninguna exportación. |
-| 2 | **La pantalla Renta es una cáscara** | `RentaScreen` llama a `RentaPresenter.build` solo con `buys`; ventas, dividendos y propuesta SII van vacíos → la Conciliación siempre muestra su estado vacío y el CSV copiado solo trae encabezado + disclaimer. No hay UI para registrar ventas ni dividendos. |
-| 3 | **El seed tributario no se lee** | `app/src/main/assets/renta_params_2026.json` no tiene ningún lector; `RentaPresenter` usa UTA=800.000 placeholder e `ipcIndex` vacío (el reajuste IPC siempre da factor 1,0). |
-| 4 | **Fecha de compra falsa en el FIFO** | Los lotes se derivan de `InvestmentEntity.createdAt` (fecha en que se creó el registro, no la de compra real). |
-| 5 | Sin recurrentes ni importación CSV | Todo movimiento se teclea a mano, cada mes. |
-| 6 | `ReasoningService`/Ollama sin consumidor | Código muerto a la espera de cablearse (`network_security_config.xml` hoy solo permite `finnhub.io`). |
+| 1 | **La pantalla Renta es una cáscara** | `RentaScreen` llama a `RentaPresenter.build` solo con `buys`; ventas, dividendos y propuesta SII van vacíos → la Conciliación siempre muestra su estado vacío y el CSV copiado solo trae encabezado + disclaimer. No hay UI para registrar ventas ni dividendos. |
+| 2 | **El seed tributario no se lee** | `app/src/main/assets/renta_params_2026.json` no tiene ningún lector; `RentaPresenter` usa UTA=800.000 placeholder e `ipcIndex` vacío (el reajuste IPC siempre da factor 1,0). |
+| 3 | **Fecha de compra falsa en el FIFO** | Los lotes se derivan de `InvestmentEntity.createdAt` (fecha en que se creó el registro, no la de compra real). |
+| 4 | Sin recurrentes ni importación CSV | Todo movimiento se teclea a mano, cada mes. |
+| 5 | `ReasoningService`/Ollama sin consumidor | Código muerto a la espera de cablearse (`network_security_config.xml` hoy solo permite `finnhub.io`). |
+| 6 | Deprecaciones y estilo pendientes | `TabRow` deprecado (AjustesScreen, MovimientosScreen → Primary/SecondaryTabRow); `Icons.Filled.ReceiptLong` (MovimientosScreen) y `Backspace` (PinPad) → AutoMirrored; `Color.White` de DashboardScreen por auditar sitio a sitio (los blancos sobre degradado fijo de los heros están BIEN y no se tocan). |
 | 7 | `README.md` es la plantilla de AI Studio | Reescribir cuando toque. |
+| 8 | `FinanceViewModel` ~1000 líneas | Partirlo por dominios (dashboard/movimientos/presupuesto/portafolio) cuando haya una razón funcional; el respaldo ya salió a `BackupViewModel`. |
 
 ## Backlog priorizado
 
-**P0 — no perder nada**
-1. **Respaldo cifrado exportable/importable**: passphrase elegida por el usuario (distinta del
-   PIN), derivación PBKDF2/scrypt, AES/GCM reutilizando los patrones de
-   `security/DatabaseKeyProvider.kt`, archivo vía SAF (`ACTION_CREATE_DOCUMENT` /
-   `ACTION_OPEN_DOCUMENT`). Nunca persistir la passphrase. Verificación real: exportar →
-   borrar datos de la app (invalida el Keystore) → importar → ingresos, gastos, presupuestos y
-   cartera vuelven completos.
-2. Recordatorio "último respaldo hace N días" en Ajustes.
+**P0 — no perder nada — ✅ COMPLETADO (26-jul-2026)**
+Respaldo cifrado exportable/importable + recordatorio en Ajustes. Falta solo la verificación
+E2E manual en emulador: exportar → "Borrar todos los datos" → importar → verificar los
+totales de referencia y la cartera. Passphrase incorrecta debe fallar con mensaje claro y BD
+intacta (ya blindado por `BackupRoundTripTest`).
 
 **P1 — fricción diaria**
-3. Transacciones recurrentes/plantillas (sueldo, arriendo, suscripciones) con generación al
+1. Transacciones recurrentes/plantillas (sueldo, arriendo, suscripciones) con generación al
    llegar el mes.
-4. Importar cartola bancaria CSV con mapeo de columnas y detección de duplicados.
-5. Entrada rápida: repetir último movimiento, categoría sugerida por descripción.
+2. Importar cartola bancaria CSV con mapeo de columnas y detección de duplicados.
+3. Entrada rápida: repetir último movimiento, categoría sugerida por descripción.
 
 **P1 — Renta útil**
-6. Entidades Room `TaxLotEntity` / `SaleEntity` / `DividendEntity` + `MIGRATION_3_4` explícita
-   y testeada.
-7. Fecha de compra real en la cartera (hoy `createdAt`).
-8. Leer `renta_params_2026.json` desde assets con cifras oficiales (SII/INE) y eliminar el
+4. Entidades Room `TaxLotEntity` / `SaleEntity` / `DividendEntity` + `MIGRATION_3_4` explícita
+   y testeada (y subir `BackupManager.CURRENT_SCHEMA_VERSION` + formato v2 del respaldo).
+5. Fecha de compra real en la cartera (hoy `createdAt`).
+6. Leer `renta_params_2026.json` desde assets con cifras oficiales (SII/INE) y eliminar el
    placeholder.
-9. UI para registrar ventas/dividendos y pegar la propuesta del SII → la Conciliación muestra
+7. UI para registrar ventas/dividendos y pegar la propuesta del SII → la Conciliación muestra
    diferencias reales y el CSV del F22 lleva líneas de datos.
-10. Flag de distribución en `SiiPolicy` (`PUBLIC_DISTRIBUTION = false`) para que
-    `RentaDisclosure` muestre las cifras completas de Art. 107 y Art. 41 A en modo personal.
+8. Flag de distribución en `SiiPolicy` (`PUBLIC_DISTRIBUTION = false`) para que
+   `RentaDisclosure` muestre las cifras completas de Art. 107 y Art. 41 A en modo personal.
 
 **P2 — extras**
-11. Cablear `ReasoningService` a un Ollama local ("explícame mis gastos del mes").
-12. README real.
+9. Cablear `ReasoningService` a un Ollama local ("explícame mis gastos del mes").
+10. README real.
+11. Brecha #6 (deprecaciones TabRow/íconos AutoMirrored + auditoría `Color.White` de
+    Dashboard) y #8 (partir `FinanceViewModel`).
 
 ## Mapa rápido del código
 
@@ -103,12 +112,15 @@ Brechas conocidas, por gravedad:
   `F22Export`, `RentaModels`, `RentaDisclosure`, `SiiPolicy`, analizadores
   (presupuesto/flujo/categorías/salud financiera). Cualquier cambio tributario entra con su
   test primero.
-- `security/` — `DatabaseKeyProvider` (Keystore + AES/GCM), `PinHasher`, `SecurityViewModel`,
-  `AppLockManager`, `BiometricGate`, `SecurityPreferences`.
+- `security/` — `DatabaseKeyProvider` (Keystore + AES/GCM), `BackupCrypto` (PBKDF2 + AES/GCM
+  del respaldo, JVM puro), `PinHasher`, `SecurityViewModel`, `AppLockManager`, `BiometricGate`,
+  `SecurityPreferences`.
 - `data/` — Room (`AppDatabase` v3, migraciones explícitas, política de no-borrado silencioso),
-  `FinanceDao`, `FinanceRepository`, mercado (Finnhub/manual), `OllamaReasoningService`.
-- `ui/` — pantallas Compose, `RentaPresenter` (presentación pura testeable), componentes
-  compartidos (`PrivacyAmountText`, `FinanceCard`, `MainTopBar`), tema (dark-first).
+  `FinanceDao`, `FinanceRepository`, `backup/` (`BackupCodec` formato v1 + `BackupManager`
+  export/import atómico), mercado (Finnhub/manual), `OllamaReasoningService`.
+- `ui/` — pantallas Compose, `RentaPresenter` (presentación pura testeable), `BackupViewModel`
+  (flujo de respaldo, separado del `FinanceViewModel`), componentes compartidos
+  (`PrivacyAmountText`, `FinanceCard`, `MainTopBar`, `EmptyState`), tema (dark-first).
 - Tests en `app/src/test/` (JVM puro + Robolectric).
 
 ## Comandos
