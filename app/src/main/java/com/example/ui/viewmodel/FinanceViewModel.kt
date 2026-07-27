@@ -303,20 +303,25 @@ class FinanceViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardDetails())
 
     // --- Filtered and searched transactions flow for Movimientos tab ---
+
+    /** C1: filtros de Movimientos agrupados y TIPADOS (elimina los casts inseguros del combine). */
+    private data class TxFilter(
+        val type: String,
+        val category: String,
+        val month: Int,
+        val year: Int,
+        val search: String,
+    )
+
+    private val txFilterFlow: Flow<TxFilter> = combine(
+        filterType, filterCategory, filterMonth, filterYear, searchQuery,
+    ) { type, category, month, year, search -> TxFilter(type, category, month, year, search) }
+
     val filteredTransactionsFlow: StateFlow<List<TransactionEntity>> = combine(
         allTransactions,
-        filterType,
-        filterCategory,
-        filterMonth,
-        filterYear,
-        searchQuery
-    ) { flowsArray ->
-        val txList = flowsArray[0] as List<TransactionEntity>
-        val type = flowsArray[1] as String
-        val category = flowsArray[2] as String
-        val fm = flowsArray[3] as Int
-        val fy = flowsArray[4] as Int
-        val search = flowsArray[5] as String
+        txFilterFlow,
+    ) { txList, filter ->
+        val (type, category, fm, fy, search) = filter
 
         // FIN2-05: representación PLANA del monto para la búsqueda. Double.toString emite
         // notación científica desde 1e7 ("1.2E7"), por lo que buscar "12000000" no encontraba
@@ -349,22 +354,26 @@ class FinanceViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // --- Budget calculations flow ---
+
+    /** C1: parámetros de consulta del presupuesto agrupados y TIPADOS (sin casts de array). */
+    private data class BudgetQuery(
+        val month: Int,
+        val year: Int,
+        val avgMode: Boolean,
+        val today: Today,
+    )
+
+    private val budgetQueryFlow: Flow<BudgetQuery> = combine(
+        selectedMonth, selectedYear, quarterlyAverageMode, dateTick,
+    ) { month, year, avgMode, today -> BudgetQuery(month, year, avgMode, today) }
+
     val budgetReportFlow: StateFlow<List<BudgetReportItem>> = combine(
         allBudgets,
         allTransactions,
         allCategories,
-        selectedMonth,
-        selectedYear,
-        quarterlyAverageMode,
-        dateTick
-    ) { flowsArray ->
-        val budgets = flowsArray[0] as List<BudgetEntity>
-        val transactions = flowsArray[1] as List<TransactionEntity>
-        val categories = flowsArray[2] as List<CategoryEntity>
-        val sMonth = flowsArray[3] as Int
-        val sYear = flowsArray[4] as Int
-        val isAvgMode = flowsArray[5] as Boolean
-        val today = flowsArray[6] as Today
+        budgetQueryFlow,
+    ) { budgets, transactions, categories, query ->
+        val (sMonth, sYear, isAvgMode, today) = query
 
         // Solo categorías de gasto REALES del usuario + las que ya tienen un presupuesto guardado.
         // Sin categorías de referencia hardcodeadas: con la BD vacía, la lista queda vacía y la

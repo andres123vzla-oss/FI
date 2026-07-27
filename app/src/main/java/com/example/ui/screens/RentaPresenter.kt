@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.data.entity.InvestmentEntity
 import com.example.domain.BuyLot
 import com.example.domain.DividendCalculator
 import com.example.domain.DividendParams
@@ -16,7 +17,9 @@ import com.example.domain.RentaRegime
 import com.example.domain.RentaResult
 import com.example.domain.SaleEvent
 import com.example.domain.SiiPolicy
+import com.example.domain.YearMonth
 import com.example.util.FormatUtils
+import java.util.Calendar
 import kotlin.math.abs
 
 /**
@@ -36,8 +39,9 @@ import kotlin.math.abs
  * el sello legal, las dos tarjetas "requiere contador" (la política v1) y el footer de Clave
  * Tributaria. Cuando existan datos, las cifras referenciales se muestran con su sello.
  *
- * OBJETO PURO: solo `kotlin.*`, el dominio y `util/FormatUtils` (JVM puro). Cero imports de Android,
- * así queda testeable como el resto del motor.
+ * OBJETO PURO: solo `kotlin.*`, `java.util.Calendar`, el dominio, los POJOs de `data.entity`
+ * (anotaciones de Room sin runtime Android) y `util/FormatUtils`. Cero imports de Android/Compose,
+ * así queda testeable en JVM como el resto del motor (RentaPresenterTest).
  */
 object RentaPresenter {
 
@@ -151,6 +155,24 @@ object RentaPresenter {
             copyPayload = csv,
         )
     }
+
+    /**
+     * C4: mapea posiciones de cartera → lotes de compra del FIFO. Antes vivía como extensión
+     * privada en RentaScreen (capa UI); aquí queda testeable en JVM. La fecha se deriva de
+     * `createdAt` porque el entity aún no guarda la fecha de compra real (brecha #4 del
+     * backlog); con la app sin ventas registradas estos lotes no generan ninguna cifra.
+     */
+    fun fromInvestments(investments: List<InvestmentEntity>): List<BuyLot> =
+        investments.map { inv ->
+            val cal = Calendar.getInstance().apply { timeInMillis = inv.createdAt }
+            BuyLot(
+                ticker = inv.ticker,
+                date = YearMonth(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1),
+                quantity = inv.quantity,
+                unitPrice = inv.purchasePrice,
+                commission = 0.0,
+            )
+        }
 }
 
 /** Una métrica del bloque "Resumen de inversiones". [isAmount] enmascara el valor en modo privacidad. */

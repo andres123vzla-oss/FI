@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.content.ClipData
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -29,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Public
@@ -45,6 +47,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,9 +55,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -63,11 +68,9 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.entity.InvestmentEntity
-import com.example.domain.BuyLot
-import com.example.domain.YearMonth
 import com.example.security.SecurityViewModel
 import com.example.ui.components.AmountVisibilityToggle
+import com.example.ui.components.EmptyState
 import com.example.ui.components.FinanceCard
 import com.example.ui.components.MainTopBar
 import com.example.ui.components.PrivacyAmountText
@@ -78,6 +81,7 @@ import com.example.ui.theme.LocalFinanceColors
 import com.example.ui.theme.LocalReducedMotion
 import com.example.ui.viewmodel.FinanceViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Calendar
 
 /**
@@ -119,7 +123,8 @@ fun RentaScreen(
     // devuelve un resumen vacío y la pantalla muestra su estado vacío amable). Las posiciones de la
     // cartera se mapean a lotes de compra para alimentar el FIFO en cuanto existan ventas.
     val taxYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
-    val buys = remember(investments) { investments.map { it.toBuyLot() } }
+    // C4: el mapeo cartera→lotes vive en el presentador (testeable en JVM), no en la UI.
+    val buys = remember(investments) { RentaPresenter.fromInvestments(investments) }
     val state = remember(buys, taxYear) { RentaPresenter.build(taxYear = taxYear, buys = buys) }
 
     Scaffold(
@@ -410,11 +415,8 @@ private fun ConciliacionCard(state: RentaUiState) {
 
         if (state.reconRows.isEmpty()) {
             state.reconEmptyMessage?.let { msg ->
-                Text(
-                    text = msg,
-                    style = MaterialTheme.typography.bodySmall.copy(lineHeight = 17.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                // V3: estado vacío unificado con el componente del sistema (antes texto plano).
+                EmptyState(message = msg, icon = Icons.Filled.CompareArrows)
             }
         } else {
             ReconHeaderRow()
@@ -526,7 +528,10 @@ private fun DiffWarningBanner(message: String, negativeColor: Color) {
  */
 @Composable
 private fun CopyValuesButton(state: RentaUiState) {
-    val clipboard = LocalClipboardManager.current
+    // C3: LocalClipboardManager quedó deprecado; LocalClipboard expone una API suspend.
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
     var copied by remember { mutableStateOf(false) }
     LaunchedEffect(copied) {
         if (copied) {
@@ -543,7 +548,11 @@ private fun CopyValuesButton(state: RentaUiState) {
             .background(Brush.linearGradient(listOf(AccentBlue, AccentCyan)))
             .pressScale(target = 0.98f, interactionSource = interaction)
             .clickable(interactionSource = interaction, indication = null) {
-                clipboard.setText(AnnotatedString(state.copyPayload))
+                scope.launch {
+                    clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("F22", state.copyPayload)))
+                }
+                // V1: confirmación táctil del copiado (además del "Copiado ✓" visual).
+                haptics.performHapticFeedback(HapticFeedbackType.Confirm)
                 copied = true
             }
             .heightIn(min = 54.dp)
@@ -588,21 +597,5 @@ private fun ClaveTributariaFooter() {
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 18.dp, end = 18.dp, top = 4.dp),
-    )
-}
-
-/**
- * Mapea una posición de cartera a un lote de compra para el FIFO del motor. La fecha se deriva de
- * `createdAt` (el entity no guarda fecha de compra explícita); con la app en blanco no hay ventas,
- * así que estos lotes aún no generan ninguna cifra tributaria.
- */
-private fun InvestmentEntity.toBuyLot(): BuyLot {
-    val cal = Calendar.getInstance().apply { timeInMillis = createdAt }
-    return BuyLot(
-        ticker = ticker,
-        date = YearMonth(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1),
-        quantity = quantity,
-        unitPrice = purchasePrice,
-        commission = 0.0,
     )
 }
