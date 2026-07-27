@@ -475,8 +475,8 @@ fun MovimientosScreen(
                         viewModel.deleteTransaction(txToDelete)
                         deleteConfirmTransactionId = null
                     },
-                    // UX2-01: token semántico + contentColor explícito para contraste estable.
-                    colors = ButtonDefaults.buttonColors(containerColor = finance.negative, contentColor = Color.White)
+                    // C5: par error/onError del tema (finance.negative == colorScheme.error).
+                    colors = ButtonDefaults.buttonColors(containerColor = finance.negative, contentColor = MaterialTheme.colorScheme.onError)
                 ) {
                     Text("Eliminar", fontWeight = FontWeight.Bold)
                 }

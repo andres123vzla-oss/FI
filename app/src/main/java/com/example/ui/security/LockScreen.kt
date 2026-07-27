@@ -37,7 +37,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -77,6 +79,9 @@ fun LockScreen(
 
     // Movimiento: scale-in de los dots y shake en PIN incorrecto (respeta "reducir movimiento").
     val reducedMotion = rememberReducedMotion()
+    // V1: respuesta táctil del desbloqueo. No se liga a "reducir movimiento": la háptica tiene su
+    // propio control a nivel de sistema y no provoca mareo visual.
+    val haptics = LocalHapticFeedback.current
     var errorNonce by remember { mutableStateOf(0) }
     val shakeX = remember { Animatable(0f) }
     val density = LocalDensity.current
@@ -204,7 +209,12 @@ fun LockScreen(
                     val entered = CharArray(pin.size) { pin[it] }
                     pin.clear()
                     securityViewModel.verifyPinForUnlock(entered) { success, err ->
-                        if (!success) {
+                        if (success) {
+                            // V1: confirmación táctil del desbloqueo (complementa la transición).
+                            haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                        } else {
+                            // V1: rechazo táctil junto con el shake visual y el mensaje.
+                            haptics.performHapticFeedback(HapticFeedbackType.Reject)
                             error = err
                             errorNonce++
                         }

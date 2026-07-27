@@ -55,6 +55,7 @@ import com.example.ui.theme.Motion
 import com.example.ui.theme.AccentBlue
 import com.example.ui.theme.AccentCyan
 import com.example.ui.theme.LocalFinanceColors
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import com.example.ui.viewmodel.FinanceViewModel
 import com.example.ui.viewmodel.PriceUpdateState
 import com.example.util.FormatUtils
@@ -125,7 +126,8 @@ fun PortafolioScreen(
             FloatingActionButton(
                 onClick = { showAddDialog = true },
                 containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = Color.White,
+                contentColor = MaterialTheme.colorScheme.onPrimary, // C5: token, no blanco fijo
+
                 interactionSource = fabInteraction,
                 modifier = Modifier
                     .testTag("fab_add_stock")
@@ -334,11 +336,10 @@ fun PortafolioScreen(
                         Button(
                             onClick = { viewModel.refreshPrices() },
                             enabled = priceState !is PriceUpdateState.Loading,
-                            // UX2-01: contenedor semántico del tema + contenido blanco explícito
-                            // para asegurar contraste del texto/icono sobre el primary.
+                            // C5: par de tokens primary/onPrimary (contraste garantizado por tema).
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = Color.White,
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
                             ),
                             shape = MaterialTheme.shapes.small,
                             modifier = Modifier.testTag("refresh_prices_button")
@@ -346,7 +347,7 @@ fun PortafolioScreen(
                             if (priceState is PriceUpdateState.Loading) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(16.dp),
-                                    color = Color.White,
+                                    color = MaterialTheme.colorScheme.onPrimary, // C5
                                     strokeWidth = 2.dp
                                 )
                             } else {
@@ -463,10 +464,18 @@ fun PortafolioScreen(
                     )
                 }
             } else {
+                // V2: pull-to-refresh manual sobre la lista de activos. Complementa el botón
+                // "Actualizar" y el auto-refresh; comparte PriceUpdateState.Loading como indicador
+                // y, sin API key, el gesto muestra el mismo mensaje claro del flujo manual.
+                PullToRefreshBox(
+                    isRefreshing = priceState is PriceUpdateState.Loading,
+                    onRefresh = { viewModel.refreshPrices() },
+                    modifier = Modifier.weight(1f),
+                ) {
                 LazyColumn(
                     state = stocksListState,
                     modifier = Modifier
-                        .weight(1f)
+                        .fillMaxSize()
                         .padding(horizontal = 12.dp)
                         .testTag("stocks_list"),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -630,6 +639,7 @@ fun PortafolioScreen(
                         }
                     }
                 }
+                } // cierre de PullToRefreshBox (V2)
             }
         }
     }

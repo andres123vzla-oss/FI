@@ -152,7 +152,7 @@ fun SecuritySettingsCard(
                     modifier = Modifier.fillMaxWidth().testTag("setup_pin_button"),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = Color.White
+                        contentColor = MaterialTheme.colorScheme.onPrimary // C5: token, no blanco fijo
                     )
                 ) {
                     Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
