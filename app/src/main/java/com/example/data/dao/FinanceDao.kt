@@ -4,6 +4,7 @@ import androidx.room.*
 import com.example.data.entity.BudgetEntity
 import com.example.data.entity.CategoryEntity
 import com.example.data.entity.InvestmentEntity
+import com.example.data.entity.RecurringRuleEntity
 import com.example.data.entity.TransactionEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -161,12 +162,52 @@ interface FinanceDao {
     @Query("DELETE FROM investments")
     suspend fun clearAllInvestments()
 
+    // --- Movimientos recurrentes (P1-1) ---
+
+    @Query("SELECT * FROM recurring_rules ORDER BY dayOfMonth ASC, description ASC")
+    fun getAllRecurring(): Flow<List<RecurringRuleEntity>>
+
+    /** One-shot para el generador y el respaldo (sin suscribirse a un Flow). */
+    @Query("SELECT * FROM recurring_rules")
+    suspend fun getAllRecurringOnce(): List<RecurringRuleEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRecurring(rule: RecurringRuleEntity): Long
+
+    // Solo para restauración de respaldo (corre tras clearAll, sin conflictos posibles).
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRecurrings(rules: List<RecurringRuleEntity>)
+
+    @Update
+    suspend fun updateRecurring(rule: RecurringRuleEntity)
+
+    @Query("DELETE FROM recurring_rules WHERE id = :id")
+    suspend fun deleteRecurringById(id: Int)
+
+    @Query("DELETE FROM recurring_rules")
+    suspend fun clearAllRecurring()
+
+    /**
+     * P1-1: aplica una pasada del generador de recurrentes de forma ATÓMICA: inserta los
+     * movimientos del período y avanza el ancla (lastYear/lastMonth) de cada regla en la MISMA
+     * transacción. Sin esto, un fallo a mitad dejaría o el movimiento sin ancla (duplicado al
+     * reintentar) o el ancla sin movimiento (mes perdido).
+     */
+    @Transaction
+    suspend fun applyGenerated(
+        transactions: List<TransactionEntity>,
+        updatedRules: List<RecurringRuleEntity>,
+    ) {
+        transactions.forEach { insertTransaction(it) }
+        updatedRules.forEach { updateRecurring(it) }
+    }
+
     // --- Operaciones atómicas (A2: seed/clear multi-tabla sin estado inconsistente) ---
 
     /**
-     * A2: borra las 4 tablas y reinserta el conjunto completo en una sola transacción.
+     * A2: borra las 5 tablas y reinserta el conjunto completo en una sola transacción.
      * Room hace rollback ante CancellationException o cualquier excepción, garantizando
-     * todo-o-nada. Más rápido que ~32 operaciones sueltas.
+     * todo-o-nada. (P1-1: incluye las reglas recurrentes, para el import del respaldo.)
      */
     @Transaction
     suspend fun replaceAllData(
@@ -174,23 +215,27 @@ interface FinanceDao {
         budgets: List<BudgetEntity>,
         investments: List<InvestmentEntity>,
         transactions: List<TransactionEntity>,
+        recurring: List<RecurringRuleEntity>,
     ) {
         clearAllTransactions()
         clearAllCategories()
         clearAllBudgets()
         clearAllInvestments()
+        clearAllRecurring()
         insertCategories(categories)
         insertBudgets(budgets)
         insertInvestments(investments)
         transactions.forEach { insertTransaction(it) }
+        insertRecurrings(recurring)
     }
 
-    /** A2: borra las 4 tablas de forma atómica. */
+    /** A2: borra las 5 tablas de forma atómica (P1-1: recurrentes incluidas). */
     @Transaction
     suspend fun clearAll() {
         clearAllTransactions()
         clearAllCategories()
         clearAllBudgets()
         clearAllInvestments()
+        clearAllRecurring()
     }
 }

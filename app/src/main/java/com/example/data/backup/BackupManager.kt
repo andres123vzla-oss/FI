@@ -43,6 +43,7 @@ class BackupManager(private val repository: FinanceRepository) {
             categories = repository.allCategories.first(),
             budgets = repository.allBudgets.first(),
             investments = repository.allInvestments.first(),
+            recurring = repository.allRecurringOnce(), // P1-1 (formato v2)
         )
         val sealed = BackupCrypto.seal(BackupCodec.encodePayload(snapshot), passphrase)
         val text = BackupCodec.encodeContainer(sealed, nowEpochMs, CURRENT_SCHEMA_VERSION)
@@ -78,6 +79,7 @@ class BackupManager(private val repository: FinanceRepository) {
             budgets = snapshot.budgets,
             investments = snapshot.investments,
             transactions = snapshot.transactions,
+            recurring = snapshot.recurring,
         )
         snapshot
     }
@@ -100,11 +102,11 @@ class BackupManager(private val repository: FinanceRepository) {
     companion object {
         /**
          * Versión del esquema Room que produce este export. DEBE avanzar junto con
-         * `AppDatabase.version` (v3 hoy); el import rechaza respaldos de esquemas más nuevos.
-         * Los esquemas antiguos (< actual) se aceptan: el formato v1 serializa los campos con
-         * defaults en las entidades, por lo que columnas nuevas futuras deberán tener default.
+         * `AppDatabase.version` (v4 hoy: P1-1 añadió recurring_rules); el import rechaza
+         * respaldos de esquemas más nuevos. Los esquemas antiguos (< actual) se aceptan: el
+         * códec trata las claves nuevas como opcionales (p. ej. "recurring" vacía en v1).
          */
-        const val CURRENT_SCHEMA_VERSION = 3
+        const val CURRENT_SCHEMA_VERSION = 4
 
         /** Tope de lectura: muy por encima de cualquier respaldo personal real (~KB). */
         const val MAX_FILE_BYTES = 32 * 1024 * 1024

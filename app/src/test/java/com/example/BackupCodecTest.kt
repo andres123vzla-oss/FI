@@ -6,6 +6,7 @@ import com.example.data.backup.BackupSnapshot
 import com.example.data.entity.BudgetEntity
 import com.example.data.entity.CategoryEntity
 import com.example.data.entity.InvestmentEntity
+import com.example.data.entity.RecurringRuleEntity
 import com.example.data.entity.TransactionEntity
 import com.example.security.BackupCrypto
 import org.junit.Assert.assertEquals
@@ -56,6 +57,13 @@ class BackupCodecTest {
                 currency = "USD", createdAt = 555L, updatedAt = 666L,
             ),
         ),
+        recurring = listOf(
+            RecurringRuleEntity(
+                id = 4, type = "EXPENSE", categoryName = "Vivienda", description = "Arriendo",
+                amount = 458_000.0, dayOfMonth = 1, active = true,
+                lastYear = 2026, lastMonth = 6, createdAt = 777L, updatedAt = 888L,
+            ),
+        ),
     )
 
     @Test
@@ -66,6 +74,15 @@ class BackupCodecTest {
         assertEquals(snapshot.categories, decoded.categories)
         assertEquals(snapshot.budgets, decoded.budgets)
         assertEquals(snapshot.investments, decoded.investments)
+        assertEquals(snapshot.recurring, decoded.recurring) // P1-1 (formato v2)
+    }
+
+    @Test
+    fun `payload v1 sin clave recurring importa lista vacia (compatibilidad)`() {
+        val v1 = """{"transactions":[],"categories":[],"budgets":[],"investments":[]}"""
+        val decoded = BackupCodec.decodePayload(v1.toByteArray(Charsets.UTF_8))
+        assertTrue(decoded.recurring.isEmpty())
+        assertTrue(decoded.isEmpty)
     }
 
     @Test
@@ -75,7 +92,7 @@ class BackupCodecTest {
         val text = BackupCodec.encodeContainer(sealed, createdAtEpochMs = 1_753_500_000_000L, schemaVersion = 3)
 
         val container = BackupCodec.decodeContainer(text)
-        assertEquals(1, container.formatVersion)
+        assertEquals(2, container.formatVersion) // P1-1: formato v2 (con recurrentes)
         assertEquals(1_753_500_000_000L, container.createdAtEpochMs)
         assertEquals(3, container.schemaVersion)
         assertEquals(sealed.kdf.algorithm, container.sealed.kdf.algorithm)
@@ -104,7 +121,7 @@ class BackupCodecTest {
         val pass = "passphrase-de-prueba".toCharArray()
         val sealed = BackupCrypto.seal(BackupCodec.encodePayload(snapshot), pass)
         val futuro = BackupCodec.encodeContainer(sealed, 0L, 3)
-            .replace("\"formatVersion\": 1", "\"formatVersion\": 99")
+            .replace("\"formatVersion\": 2", "\"formatVersion\": 99")
         val e = assertThrows(BackupFormatException::class.java) {
             BackupCodec.decodeContainer(futuro)
         }

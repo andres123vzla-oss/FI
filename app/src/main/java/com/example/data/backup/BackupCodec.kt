@@ -4,6 +4,7 @@ import android.util.Base64
 import com.example.data.entity.BudgetEntity
 import com.example.data.entity.CategoryEntity
 import com.example.data.entity.InvestmentEntity
+import com.example.data.entity.RecurringRuleEntity
 import com.example.data.entity.TransactionEntity
 import com.example.security.BackupCrypto
 import org.json.JSONArray
@@ -17,16 +18,18 @@ import org.json.JSONObject
  */
 class BackupFormatException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
-/** Foto completa de las 4 tablas (con ids y timestamps) para exportar/importar sin pérdida. */
+/** Foto completa de las 5 tablas (con ids y timestamps) para exportar/importar sin pérdida. */
 data class BackupSnapshot(
     val transactions: List<TransactionEntity>,
     val categories: List<CategoryEntity>,
     val budgets: List<BudgetEntity>,
     val investments: List<InvestmentEntity>,
+    /** P1-1 (formato v2): reglas recurrentes. Vacía en respaldos v1. */
+    val recurring: List<RecurringRuleEntity> = emptyList(),
 ) {
     val isEmpty: Boolean
         get() = transactions.isEmpty() && categories.isEmpty() &&
-            budgets.isEmpty() && investments.isEmpty()
+            budgets.isEmpty() && investments.isEmpty() && recurring.isEmpty()
 }
 
 /**
@@ -55,7 +58,12 @@ data class BackupSnapshot(
 object BackupCodec {
 
     const val MAGIC = "FISUITE_BACKUP"
-    const val FORMAT_VERSION = 1
+
+    /**
+     * v1: 4 tablas. v2 (P1-1): + clave "recurring" en el payload. El decode acepta ambas: un
+     * payload sin "recurring" (respaldos v1 ya exportados) importa con la lista vacía.
+     */
+    const val FORMAT_VERSION = 2
 
     /** Contenedor decodificado (header + bloque sellado listo para [BackupCrypto.open]). */
     class Container(
@@ -128,6 +136,24 @@ object BackupCodec {
                 )
             }
         })
+        root.put("recurring", JSONArray().apply {
+            snapshot.recurring.forEach { r ->
+                put(
+                    JSONObject()
+                        .put("id", r.id)
+                        .put("type", r.type)
+                        .put("categoryName", r.categoryName)
+                        .put("description", r.description)
+                        .put("amount", r.amount)
+                        .put("dayOfMonth", r.dayOfMonth)
+                        .put("active", r.active)
+                        .put("lastYear", r.lastYear)
+                        .put("lastMonth", r.lastMonth)
+                        .put("createdAt", r.createdAt)
+                        .put("updatedAt", r.updatedAt)
+                )
+            }
+        })
         return root.toString().toByteArray(Charsets.UTF_8)
     }
 
@@ -178,7 +204,23 @@ object BackupCodec {
                 updatedAt = o.getLong("updatedAt"),
             )
         }
-        BackupSnapshot(transactions, categories, budgets, investments)
+        // P1-1 (formato v2): clave OPCIONAL — un respaldo v1 (sin "recurring") importa con vacía.
+        val recurring = root.optJSONArray("recurring")?.mapObjects { o ->
+            RecurringRuleEntity(
+                id = o.getInt("id"),
+                type = o.getString("type"),
+                categoryName = o.getString("categoryName"),
+                description = o.getString("description"),
+                amount = o.getDouble("amount"),
+                dayOfMonth = o.getInt("dayOfMonth"),
+                active = o.getBoolean("active"),
+                lastYear = o.getInt("lastYear"),
+                lastMonth = o.getInt("lastMonth"),
+                createdAt = o.getLong("createdAt"),
+                updatedAt = o.getLong("updatedAt"),
+            )
+        } ?: emptyList()
+        BackupSnapshot(transactions, categories, budgets, investments, recurring)
     } catch (e: JSONException) {
         throw BackupFormatException("El contenido del respaldo está dañado o incompleto.", e)
     }

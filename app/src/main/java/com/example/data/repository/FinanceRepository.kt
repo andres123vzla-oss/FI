@@ -4,7 +4,9 @@ import com.example.data.dao.FinanceDao
 import com.example.data.entity.BudgetEntity
 import com.example.data.entity.CategoryEntity
 import com.example.data.entity.InvestmentEntity
+import com.example.data.entity.RecurringRuleEntity
 import com.example.data.entity.TransactionEntity
+import com.example.data.recurring.RecurringGenerator
 import kotlinx.coroutines.flow.Flow
 
 class FinanceRepository(private val dao: FinanceDao) {
@@ -13,6 +15,7 @@ class FinanceRepository(private val dao: FinanceDao) {
     val allCategories: Flow<List<CategoryEntity>> = dao.getAllCategories()
     val allBudgets: Flow<List<BudgetEntity>> = dao.getAllBudgets()
     val allInvestments: Flow<List<InvestmentEntity>> = dao.getAllInvestments()
+    val allRecurring: Flow<List<RecurringRuleEntity>> = dao.getAllRecurring()
 
     fun getBudgetsForMonthAndYear(month: Int, year: Int): Flow<List<BudgetEntity>> =
         dao.getBudgetsForMonthAndYear(month, year)
@@ -105,6 +108,8 @@ class FinanceRepository(private val dao: FinanceDao) {
             budgets = initialBudgets,
             investments = initialStocks,
             transactions = seedIncomes + seedExpenses,
+            // El seed demo NO siembra reglas recurrentes (SeedDataRegressionTest sigue intacto).
+            recurring = emptyList(),
         )
     }
 
@@ -123,12 +128,33 @@ class FinanceRepository(private val dao: FinanceDao) {
         budgets: List<BudgetEntity>,
         investments: List<InvestmentEntity>,
         transactions: List<TransactionEntity>,
+        recurring: List<RecurringRuleEntity>,
     ) = dao.replaceAllData(
         categories = categories,
         budgets = budgets,
         investments = investments,
         transactions = transactions,
+        recurring = recurring,
     )
+
+    // --- Movimientos recurrentes (P1-1) ---
+
+    suspend fun allRecurringOnce(): List<RecurringRuleEntity> = dao.getAllRecurringOnce()
+    suspend fun addRecurringRule(rule: RecurringRuleEntity) = dao.insertRecurring(rule)
+    suspend fun updateRecurringRule(rule: RecurringRuleEntity) = dao.updateRecurring(rule)
+    suspend fun deleteRecurringRuleById(id: Int) = dao.deleteRecurringById(id)
+
+    /**
+     * P1-1: una pasada del generador hasta "hoy". Lee las reglas, calcula lo pendiente
+     * ([RecurringGenerator], puro) y lo aplica en la transacción atómica del DAO
+     * (movimientos + avance de ancla juntos). Idempotente: reabrir la app no duplica.
+     */
+    suspend fun generateDueRecurring(year: Int, month: Int, day: Int) {
+        val rules = dao.getAllRecurringOnce()
+        if (rules.isEmpty()) return
+        val result = RecurringGenerator.pending(rules, year, month, day)
+        if (!result.isEmpty) dao.applyGenerated(result.transactions, result.updatedRules)
+    }
 
     // --- Direct CRUD delegation ---
     suspend fun insertTransaction(transaction: TransactionEntity) = dao.insertTransaction(transaction)

@@ -5,6 +5,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.backup.BackupManager
 import com.example.data.database.AppDatabase
+import com.example.data.entity.RecurringRuleEntity
 import com.example.data.repository.FinanceRepository
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -56,13 +57,22 @@ class BackupRoundTripTest {
             val repo = FinanceRepository(db.financeDao())
             val manager = BackupManager(repo)
 
-            // Estado conocido: el seed demo manual (totales del CLAUDE.md).
+            // Estado conocido: el seed demo manual (totales del CLAUDE.md) + una regla
+            // recurrente (P1-1: la 5ª tabla también viaja en el respaldo, formato v2).
             repo.restoreSeedData()
+            repo.addRecurringRule(
+                RecurringRuleEntity(
+                    type = "EXPENSE", categoryName = "Vivienda", description = "Arriendo",
+                    amount = 458_000.0, dayOfMonth = 1, lastYear = 2026, lastMonth = 7,
+                ),
+            )
             val txAntes = repo.allTransactions.first().sortedBy { it.id }
             val catAntes = repo.allCategories.first().sortedBy { it.id }
             val budAntes = repo.allBudgets.first().sortedBy { it.id }
             val invAntes = repo.allInvestments.first().sortedBy { it.id }
+            val recAntes = repo.allRecurringOnce().sortedBy { it.id }
             assertTrue(txAntes.isNotEmpty())
+            assertTrue(recAntes.isNotEmpty())
 
             // Export a memoria (el flujo real usa un stream de SAF; el formato es idéntico).
             val out = ByteArrayOutputStream()
@@ -72,6 +82,7 @@ class BackupRoundTripTest {
             // Catástrofe simulada: se pierde todo (equivale a teléfono nuevo/Keystore invalidado).
             repo.clearAllData()
             assertTrue(repo.allTransactions.first().isEmpty())
+            assertTrue(repo.allRecurringOnce().isEmpty())
 
             // Import: la base vuelve EXACTA (ids y timestamps incluidos; orden normalizado por id).
             val importado = manager.importFrom(ByteArrayInputStream(archivo), passphrase.toCharArray())
@@ -79,6 +90,7 @@ class BackupRoundTripTest {
             assertEquals(catAntes, repo.allCategories.first().sortedBy { it.id })
             assertEquals(budAntes, repo.allBudgets.first().sortedBy { it.id })
             assertEquals(invAntes, repo.allInvestments.first().sortedBy { it.id })
+            assertEquals(recAntes, repo.allRecurringOnce().sortedBy { it.id })
 
             // Totales de referencia del proyecto (CLAUDE.md).
             val tx = repo.allTransactions.first()

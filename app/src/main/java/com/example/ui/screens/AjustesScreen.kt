@@ -47,7 +47,9 @@ import com.example.ui.components.CategoryChip
 import com.example.ui.components.EmptyState
 import com.example.ui.components.FinanceCard
 import com.example.ui.components.MainTopBar
+import com.example.ui.components.RecurringRuleDialog
 import com.example.ui.components.pressScale
+import com.example.util.FormatUtils
 import com.example.ui.security.ConfirmPinDialog
 import com.example.ui.security.ExportBackupDialog
 import com.example.ui.security.ImportBackupDialog
@@ -103,6 +105,11 @@ fun AjustesScreen(
     // re-resuelve desde ellas tras rotación/muerte de proceso. La passphrase NUNCA va a saveable.
     var pendingExportUri by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingImportUri by rememberSaveable { mutableStateOf<String?>(null) }
+
+    // --- P1-1: Movimientos recurrentes ---
+    val recurringRules by viewModel.allRecurring.collectAsState()
+    var showRecurringDialog by rememberSaveable { mutableStateOf(false) }
+    var recurringToDeleteId by rememberSaveable { mutableStateOf<Int?>(null) }
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri -> if (uri != null) pendingExportUri = uri.toString() }
@@ -273,6 +280,80 @@ fun AjustesScreen(
                               }
                             }
                         }
+                    }
+                }
+            }
+
+            // --- P1-1: MOVIMIENTOS RECURRENTES ---
+            Text(
+                "Movimientos recurrentes",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp)
+            )
+            FinanceCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "Sueldo, arriendo, suscripciones: se registran solos cada mes al llegar su día.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (recurringRules.isEmpty()) {
+                        Text(
+                            "Aún no tienes reglas recurrentes.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("recurring_empty")
+                        )
+                    } else {
+                        recurringRules.forEach { rule ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("recurring_row_${rule.id}"),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        rule.description,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    Text(
+                                        "${FormatUtils.formatCLP(rule.amount)} · día ${rule.dayOfMonth} · ${rule.categoryName}" +
+                                            if (rule.type == "INCOME") " · Ingreso" else "",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = rule.active,
+                                    onCheckedChange = { viewModel.setRecurringActive(rule, it) },
+                                    modifier = Modifier.testTag("recurring_switch_${rule.id}")
+                                )
+                                IconButton(
+                                    onClick = { recurringToDeleteId = rule.id },
+                                    modifier = Modifier.testTag("recurring_delete_${rule.id}")
+                                ) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "Eliminar regla",
+                                        tint = finance.negative,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    TextButton(
+                        onClick = { showRecurringDialog = true },
+                        modifier = Modifier.testTag("recurring_add_button")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Nueva regla", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -635,6 +716,41 @@ fun AjustesScreen(
                 TextButton(onClick = { showDeleteAllConfirm = false }) {
                     Text("Cancelar")
                 }
+            }
+        )
+    }
+
+    // --- P1-1: diálogos de recurrentes ---
+    if (showRecurringDialog) {
+        RecurringRuleDialog(
+            categories = categories,
+            onDismiss = { showRecurringDialog = false },
+            onConfirm = { type, cat, desc, amount, day ->
+                showRecurringDialog = false
+                viewModel.addRecurringRule(type, cat, desc, amount, day)
+                scope.launch {
+                    snackbarHostState.showSnackbar("Regla creada: se registrará cada mes el día $day.")
+                }
+            },
+        )
+    }
+    recurringRules.find { it.id == recurringToDeleteId }?.let { rule ->
+        AlertDialog(
+            onDismissRequest = { recurringToDeleteId = null },
+            title = { Text("¿Eliminar regla recurrente?", fontWeight = FontWeight.Bold) },
+            text = { Text("Se dejará de generar \"${rule.description}\" cada mes. Los movimientos ya creados no se tocan.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        recurringToDeleteId = null
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        viewModel.deleteRecurringRule(rule.id)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = finance.negative, contentColor = MaterialTheme.colorScheme.onError)
+                ) { Text("Eliminar", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { recurringToDeleteId = null }) { Text("Cancelar") }
             }
         )
     }

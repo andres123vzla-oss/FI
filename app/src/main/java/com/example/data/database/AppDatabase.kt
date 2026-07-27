@@ -11,6 +11,7 @@ import com.example.data.dao.FinanceDao
 import com.example.data.entity.BudgetEntity
 import com.example.data.entity.CategoryEntity
 import com.example.data.entity.InvestmentEntity
+import com.example.data.entity.RecurringRuleEntity
 import com.example.data.entity.TransactionEntity
 import com.example.security.DatabaseKeyProvider
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
@@ -21,15 +22,19 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         CategoryEntity::class,
         BudgetEntity::class,
         InvestmentEntity::class,
+        RecurringRuleEntity::class,
     ],
     // C3/A3: version subida a 2 al añadir el índice único en investments.ticker.
     // ARQ2-05: version 3 añade índices únicos en budgets(categoryName,month,year) y
     // categories(name,type), con MIGRATION_2_3 explícita (dedupe + create index).
+    // P1-1: version 4 añade la tabla recurring_rules (movimientos recurrentes), con
+    // MIGRATION_3_4 explícita testeada en MigrationTest. Al subirla se subió también
+    // BackupManager.CURRENT_SCHEMA_VERSION (regla del CLAUDE.md).
     // POLÍTICA (A1/SEC-09): todo incremento futuro de version DEBE traer su Migration
     // explícita test-eada, para no perder silenciosamente la base financiera del usuario.
     // ARQ2-07: exportSchema=true + room.schemaLocation para versionar los esquemas JSON
     // y poder testear migraciones con MigrationTestHelper.
-    version = 3,
+    version = 4,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -50,6 +55,30 @@ abstract class AppDatabase : RoomDatabase() {
          *   crear el índice, o la migración fallaría con los duplicados existentes.
          * - categories: una fila por (name, type), deduplicada con el mismo criterio.
          */
+        /**
+         * P1-1: crea la tabla de reglas recurrentes. El CREATE es EXACTO al esquema que Room
+         * espera para la v4 (validado por MigrationTest con el 4.json exportado): tipos,
+         * NOT NULL y orden de columnas alineados con RecurringRuleEntity.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `recurring_rules` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`type` TEXT NOT NULL, " +
+                        "`categoryName` TEXT NOT NULL, " +
+                        "`description` TEXT NOT NULL, " +
+                        "`amount` REAL NOT NULL, " +
+                        "`dayOfMonth` INTEGER NOT NULL, " +
+                        "`active` INTEGER NOT NULL, " +
+                        "`lastYear` INTEGER NOT NULL, " +
+                        "`lastMonth` INTEGER NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL)"
+                )
+            }
+        }
+
         val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -99,7 +128,7 @@ abstract class AppDatabase : RoomDatabase() {
                         DB_NAME
                     )
                         .openHelperFactory(factory)
-                        .addMigrations(MIGRATION_2_3)
+                        .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
                         // SEC-09/A1: este fallback puede borrar TODA la base financiera ante un
                         // cambio de esquema sin Migration. Se conserva como última red mientras
                         // las migraciones explícitas (addMigrations) cubren los saltos conocidos;

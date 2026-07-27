@@ -27,6 +27,8 @@ import com.example.domain.CategorySpendingAnalyzer
 import com.example.domain.FinancialHealth
 import com.example.domain.FinancialHealthAnalyzer
 import com.example.domain.InvestmentCalculator
+import com.example.data.entity.RecurringRuleEntity
+import com.example.data.recurring.RecurringGenerator
 import com.example.domain.PortfolioMetrics
 import com.example.domain.QuarterlyAverageCalculator
 import com.example.util.FinanceCalculator
@@ -56,6 +58,11 @@ class FinanceViewModel(
     private val database = AppDatabase.getDatabase(application)
     private val repository = FinanceRepository(database.financeDao())
     private val marketRepo = MarketDataProvider.repository
+
+    init {
+        // P1-1: una pasada de recurrentes al abrir la app (idempotente, con catch-up de meses).
+        generateRecurringNow()
+    }
 
     /** Estado de la actualización de precios de mercado (para la pantalla de Portafolio). */
     val priceUpdateState = MutableStateFlow<PriceUpdateState>(PriceUpdateState.Idle)
@@ -130,7 +137,11 @@ class FinanceViewModel(
     /** Refresca la fecha "de hoy" (llamar en ON_RESUME). Barato e idempotente. */
     fun refreshDateTick() {
         val t = todayProvider()
-        if (t != dateTick.value) dateTick.value = t
+        if (t != dateTick.value) {
+            dateTick.value = t
+            // P1-1: al cruzar medianoche/mes con la app abierta pueden vencer recurrentes.
+            generateRecurringNow()
+        }
     }
 
     // App state: Selected Month and Year for Dashboard & Budget
@@ -161,6 +172,65 @@ class FinanceViewModel(
 
     val allInvestments: StateFlow<List<InvestmentEntity>> = repository.allInvestments
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // --- Movimientos recurrentes (P1-1) ---
+
+    val allRecurring: StateFlow<List<RecurringRuleEntity>> = repository.allRecurring
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Pasada del generador (arranque y cambio de día). Nunca tumba la app; no loguea montos. */
+    private fun generateRecurringNow() {
+        viewModelScope.launch {
+            runCatching {
+                val t = todayProvider()
+                repository.generateDueRecurring(t.year, t.month, t.day)
+            }.onFailure { android.util.Log.e("FI", "Fallo generando recurrentes", it) }
+        }
+    }
+
+    /** Crea una regla. El ancla inicial evita retro-generar el mes en curso ya vencido. */
+    fun addRecurringRule(
+        type: String,
+        categoryName: String,
+        description: String,
+        amount: Double,
+        dayOfMonth: Int,
+    ) {
+        viewModelScope.launch {
+            val t = todayProvider()
+            val (anchorYear, anchorMonth) =
+                RecurringGenerator.initialAnchor(t.year, t.month, t.day, dayOfMonth)
+            repository.addRecurringRule(
+                RecurringRuleEntity(
+                    type = type,
+                    categoryName = categoryName,
+                    description = description.trim().ifEmpty { "Movimiento recurrente" },
+                    amount = amount,
+                    dayOfMonth = dayOfMonth,
+                    lastYear = anchorYear,
+                    lastMonth = anchorMonth,
+                ),
+            )
+        }
+    }
+
+    /** Activa/desactiva. Al REACTIVAR se re-ancla a hoy: no se generan los meses apagados. */
+    fun setRecurringActive(rule: RecurringRuleEntity, active: Boolean) {
+        viewModelScope.launch {
+            val updated = if (active) {
+                val t = todayProvider()
+                val (ay, am) = RecurringGenerator.initialAnchor(t.year, t.month, t.day, rule.dayOfMonth)
+                rule.copy(active = true, lastYear = ay, lastMonth = am, updatedAt = System.currentTimeMillis())
+            } else {
+                rule.copy(active = false, updatedAt = System.currentTimeMillis())
+            }
+            repository.updateRecurringRule(updated)
+        }
+    }
+
+    fun deleteRecurringRule(id: Int) {
+        viewModelScope.launch { repository.deleteRecurringRuleById(id) }
+    }
 
     // Sin auto-seeding: la app arranca completamente vacía. Los datos solo aparecen cuando el
     // usuario los crea, o cuando invoca manualmente "Restaurar datos demo" (con reautenticación)
