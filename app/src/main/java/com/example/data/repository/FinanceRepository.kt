@@ -113,6 +113,23 @@ class FinanceRepository(private val dao: FinanceDao) {
         dao.clearAll()
     }
 
+    /**
+     * Respaldo (P0): reemplaza TODO el contenido por la foto importada, dentro de la transacción
+     * atómica del DAO (todo-o-nada, ids y timestamps preservados). Lo invoca
+     * `BackupManager.importFrom` SOLO después de validar y descifrar el archivo completo.
+     */
+    suspend fun replaceAllData(
+        categories: List<CategoryEntity>,
+        budgets: List<BudgetEntity>,
+        investments: List<InvestmentEntity>,
+        transactions: List<TransactionEntity>,
+    ) = dao.replaceAllData(
+        categories = categories,
+        budgets = budgets,
+        investments = investments,
+        transactions = transactions,
+    )
+
     // --- Direct CRUD delegation ---
     suspend fun insertTransaction(transaction: TransactionEntity) = dao.insertTransaction(transaction)
     suspend fun updateTransaction(transaction: TransactionEntity) = dao.updateTransaction(transaction)

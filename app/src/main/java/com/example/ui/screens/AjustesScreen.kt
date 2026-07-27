@@ -1,5 +1,9 @@
 package com.example.ui.screens
 
+import android.net.Uri
+import android.provider.DocumentsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -24,6 +28,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -42,8 +49,12 @@ import com.example.ui.components.FinanceCard
 import com.example.ui.components.MainTopBar
 import com.example.ui.components.pressScale
 import com.example.ui.security.ConfirmPinDialog
+import com.example.ui.security.ExportBackupDialog
+import com.example.ui.security.ImportBackupDialog
 import com.example.ui.security.SecuritySettingsCard
 import com.example.ui.theme.LocalFinanceColors
+import com.example.ui.viewmodel.BackupUiState
+import com.example.ui.viewmodel.BackupViewModel
 import com.example.ui.viewmodel.FinanceViewModel
 import com.example.util.IconMapper
 import kotlinx.coroutines.launch
@@ -53,7 +64,8 @@ import kotlinx.coroutines.launch
 fun AjustesScreen(
     viewModel: FinanceViewModel,
     modifier: Modifier = Modifier,
-    securityViewModel: SecurityViewModel = viewModel()
+    securityViewModel: SecurityViewModel = viewModel(),
+    backupViewModel: BackupViewModel = viewModel(),
 ) {
     val categories by viewModel.allCategories.collectAsState()
     val isPinSet by securityViewModel.isPinSet.collectAsState()
@@ -82,6 +94,39 @@ fun AjustesScreen(
         if (isPinSet) reauthAction = action else action()
     }
 
+    // --- Respaldo cifrado (P0): estado y launchers SAF del flujo exportar/importar ---
+    val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
+    val backupState by backupViewModel.state.collectAsState()
+    val lastBackupAt by backupViewModel.lastBackupAt.collectAsState()
+    // UX2-09: las Uri pendientes se guardan como String (saveable); el diálogo de passphrase se
+    // re-resuelve desde ellas tras rotación/muerte de proceso. La passphrase NUNCA va a saveable.
+    var pendingExportUri by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingImportUri by rememberSaveable { mutableStateOf<String?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri -> if (uri != null) pendingExportUri = uri.toString() }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> if (uri != null) pendingImportUri = uri.toString() }
+
+    // Resultado del respaldo → snackbar con háptica de confirmación/rechazo, y volver a Idle.
+    LaunchedEffect(backupState) {
+        when (val s = backupState) {
+            is BackupUiState.Success -> {
+                haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                snackbarHostState.showSnackbar(s.message)
+                backupViewModel.acknowledgeResult()
+            }
+            is BackupUiState.Error -> {
+                haptics.performHapticFeedback(HapticFeedbackType.Reject)
+                snackbarHostState.showSnackbar(s.message)
+                backupViewModel.acknowledgeResult()
+            }
+            else -> {}
+        }
+    }
+
     val expensesCats = categories.filter { it.type == "EXPENSE" }
     val incomeCats = categories.filter { it.type == "INCOME" }
 
@@ -98,7 +143,7 @@ fun AjustesScreen(
                     showAddCategoryDialog = true
                 },
                 containerColor = MaterialTheme.colorScheme.primary, // UX2-01: color de tema, no Excel*
-                contentColor = Color.White,
+                contentColor = MaterialTheme.colorScheme.onPrimary, // C5: token, no blanco fijo
                 interactionSource = fabInteraction,
                 modifier = Modifier
                     .testTag("fab_add_category")
@@ -269,6 +314,123 @@ fun AjustesScreen(
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
+                    // --- Respaldo cifrado (P0): exportar / importar + recordatorio ---
+                    Surface(
+                        onClick = {
+                            val cal = java.util.Calendar.getInstance()
+                            val name = "rinde-respaldo-%04d-%02d-%02d.json".format(
+                                cal.get(java.util.Calendar.YEAR),
+                                cal.get(java.util.Calendar.MONTH) + 1,
+                                cal.get(java.util.Calendar.DAY_OF_MONTH),
+                            )
+                            exportLauncher.launch(name)
+                        },
+                        enabled = backupState !is BackupUiState.Working,
+                        modifier = Modifier.fillMaxWidth().testTag("backup_export_row"),
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        shape = MaterialTheme.shapes.medium,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(MaterialTheme.shapes.small)
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Save, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            }
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Exportar respaldo cifrado",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                                Text(
+                                    "Guarda todos tus datos en un archivo protegido con una passphrase que tú eliges.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    Surface(
+                        onClick = {
+                            // "*/*": según el provider, el respaldo puede reportarse como
+                            // application/json u octet-stream; el import valida el contenido.
+                            importLauncher.launch(arrayOf("*/*"))
+                        },
+                        enabled = backupState !is BackupUiState.Working,
+                        modifier = Modifier.fillMaxWidth().testTag("backup_import_row"),
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        shape = MaterialTheme.shapes.medium,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(MaterialTheme.shapes.small)
+                                    .background(finance.warning.copy(alpha = 0.1f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.FileOpen, contentDescription = null, tint = finance.warning)
+                            }
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Importar respaldo",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                                Text(
+                                    "Restaura un archivo de respaldo. Reemplaza los datos actuales.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    // Recordatorio: cuándo fue el último respaldo (o aviso si nunca se ha hecho).
+                    Text(
+                        lastBackupLabel(lastBackupAt),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("backup_last_label")
+                    )
+
+                    // Progreso de la operación en curso (exportando/importando).
+                    (backupState as? BackupUiState.Working)?.let { working ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                working.label,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
                     // Restore seeds button
                     Surface(
                         onClick = { showResetSemillaConfirm = true },
@@ -402,7 +564,7 @@ fun AjustesScreen(
                             }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = finance.negative, contentColor = Color.White) // UX2-01
+                    colors = ButtonDefaults.buttonColors(containerColor = finance.negative, contentColor = MaterialTheme.colorScheme.onError) // C5: par error/onError
                 ) {
                     Text("Eliminar", fontWeight = FontWeight.Bold)
                 }
@@ -432,7 +594,7 @@ fun AjustesScreen(
                             }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = Color.White) // UX2-01
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) // C5: par primary/onPrimary
                 ) {
                     Text("Cargar Semilla", fontWeight = FontWeight.Bold)
                 }
@@ -455,6 +617,8 @@ fun AjustesScreen(
                 Button(
                     onClick = {
                         showDeleteAllConfirm = false
+                        // V1: háptica pesada al confirmar la acción más destructiva de la app.
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         runSensitive {
                             viewModel.clearAllData()
                             scope.launch {
@@ -462,7 +626,7 @@ fun AjustesScreen(
                             }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = finance.negative, contentColor = Color.White) // UX2-01
+                    colors = ButtonDefaults.buttonColors(containerColor = finance.negative, contentColor = MaterialTheme.colorScheme.onError) // C5: par error/onError
                 ) {
                     Text("Confirmar Borrado", fontWeight = FontWeight.Bold)
                 }
@@ -472,6 +636,39 @@ fun AjustesScreen(
                     Text("Cancelar")
                 }
             }
+        )
+    }
+
+    // --- Diálogos del respaldo cifrado (P0) ---
+    pendingExportUri?.let { uriStr ->
+        ExportBackupDialog(
+            onDismiss = {
+                pendingExportUri = null
+                // CreateDocument ya creó un documento vacío; si el usuario cancela la passphrase
+                // se elimina (mejor esfuerzo) para no dejar archivos basura de 0 bytes.
+                runCatching {
+                    DocumentsContract.deleteDocument(context.contentResolver, Uri.parse(uriStr))
+                }
+            },
+            onConfirm = { pass ->
+                pendingExportUri = null
+                backupViewModel.exportTo(Uri.parse(uriStr), pass.toCharArray())
+            },
+        )
+    }
+    pendingImportUri?.let { uriStr ->
+        ImportBackupDialog(
+            onDismiss = { pendingImportUri = null },
+            onConfirm = { pass ->
+                pendingImportUri = null
+                // V1: háptica pesada al confirmar una acción destructiva.
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                // Reautenticación por PIN (si existe) antes de reemplazar los datos. La
+                // passphrase viaja como CharArray y el VM la borra tras usarla (SEC-08); si el
+                // PIN se cancela, la copia queda para el GC (residuo aceptado, SEC2-08).
+                val chars = pass.toCharArray()
+                runSensitive { backupViewModel.importFrom(Uri.parse(uriStr), chars) }
+            },
         )
     }
 
@@ -495,6 +692,20 @@ fun AjustesScreen(
                 }
             }
         )
+    }
+}
+
+/**
+ * Etiqueta del recordatorio de respaldo (P0). `null` = nunca se ha exportado. Se calcula en
+ * días de calendario aproximados (86.4 M ms); precisión suficiente para un recordatorio.
+ */
+private fun lastBackupLabel(lastBackupAt: Long?): String {
+    if (lastBackupAt == null) return "Aún no exportas ningún respaldo. Si pierdes el teléfono, los datos no se pueden recuperar."
+    val days = ((System.currentTimeMillis() - lastBackupAt) / 86_400_000L).coerceAtLeast(0L)
+    return when (days) {
+        0L -> "Último respaldo: hoy."
+        1L -> "Último respaldo: ayer."
+        else -> "Último respaldo: hace $days días."
     }
 }
 

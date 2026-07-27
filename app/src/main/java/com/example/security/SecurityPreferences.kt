@@ -59,6 +59,10 @@ class SecurityPreferences(private val context: Context) {
         val LOCKOUT_COUNT = intPreferencesKey("lockout_count")
         val HIDE_AMOUNTS = booleanPreferencesKey("hide_amounts")
 
+        // P0 respaldo: momento del último export exitoso (para el recordatorio en Ajustes).
+        // No es dato sensible: solo un timestamp; no requiere envoltura del Keystore.
+        val LAST_BACKUP_AT = longPreferencesKey("last_backup_at")
+
         // SEC2-04: token del gate biométrico (cifrado con fi_bio_gate_key, NO con la wrap key:
         // su seguridad la da el auth-binding del Keystore, no la envoltura).
         val BIO_GATE_IV = stringPreferencesKey("bio_gate_iv")
@@ -133,6 +137,10 @@ class SecurityPreferences(private val context: Context) {
      */
     val hideAmounts: Flow<Boolean> =
         context.securityDataStore.data.map { it[Keys.HIDE_AMOUNTS] ?: true }
+
+    /** Momento (epoch ms) del último respaldo exportado con éxito; `null` si nunca se exportó. */
+    val lastBackupAt: Flow<Long?> =
+        context.securityDataStore.data.map { it[Keys.LAST_BACKUP_AT] }
 
     /**
      * Lee el verificador del PIN distinguiendo "no hay PIN", "disponible" y "no descifrable"
@@ -258,6 +266,11 @@ class SecurityPreferences(private val context: Context) {
 
     suspend fun setHideAmounts(hidden: Boolean) {
         context.securityDataStore.edit { it[Keys.HIDE_AMOUNTS] = hidden }
+    }
+
+    /** P0 respaldo: registra el momento del último export exitoso. */
+    suspend fun setLastBackupAt(epochMs: Long) {
+        context.securityDataStore.edit { it[Keys.LAST_BACKUP_AT] = epochMs }
     }
 
     // --- Envoltura AES/GCM del verificador del PIN con clave del Android Keystore (SEC-05) ---
