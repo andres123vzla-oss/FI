@@ -29,8 +29,8 @@ para sesiones de trabajo está en `docs/PROMPT_FABLE5.md`.
 ## Prioridades (en orden)
 
 1. **Compilación estable y tests verdes** — el proyecto siempre compila; los tests unitarios
-   (hoy 144: 38 del motor Rinde, 16 de respaldo, 6 de recurrentes, 2 de migraciones y 9 de la
-   sync Notion entre ellos) nunca quedan rojos.
+   (hoy 153: 38 del motor Rinde, 16 de respaldo, 6 de recurrentes, 2 de migraciones, 9 de la
+   sync Notion y 9 de la cartola entre ellos) nunca quedan rojos.
 2. **Nunca perder datos** — respaldo/restauración cifrados y exportables (IMPLEMENTADO:
    tarjeta "Respaldo" en Ajustes → Administración y Datos); toda subida de versión de Room
    lleva `Migration` explícita y testeada (esquemas versionados en `app/schemas/`); ningún
@@ -97,11 +97,10 @@ Brechas conocidas, por gravedad:
 | 1 | **La pantalla Renta es una cáscara** | `RentaScreen` llama a `RentaPresenter.build` solo con `buys`; ventas, dividendos y propuesta SII van vacíos → la Conciliación siempre muestra su estado vacío y el CSV copiado solo trae encabezado + disclaimer. No hay UI para registrar ventas ni dividendos. |
 | 2 | **El seed tributario no se lee** | `app/src/main/assets/renta_params_2026.json` no tiene ningún lector; `RentaPresenter` usa UTA=800.000 placeholder e `ipcIndex` vacío (el reajuste IPC siempre da factor 1,0). |
 | 3 | **Fecha de compra falsa en el FIFO** | Los lotes se derivan de `InvestmentEntity.createdAt` (fecha en que se creó el registro, no la de compra real). |
-| 4 | Sin importación CSV de cartola | Los movimientos no recurrentes se teclean a mano (las plantillas mensuales ya se generan solas). |
-| 5 | `ReasoningService`/Ollama sin consumidor | Código muerto a la espera de cablearse (`network_security_config.xml` hoy solo permite `finnhub.io`). |
-| 6 | Deprecaciones y estilo pendientes | `TabRow` deprecado (AjustesScreen, MovimientosScreen → Primary/SecondaryTabRow); `Icons.Filled.ReceiptLong` (MovimientosScreen) y `Backspace` (PinPad) → AutoMirrored; `Color.White` de DashboardScreen por auditar sitio a sitio (los blancos sobre degradado fijo de los heros están BIEN y no se tocan). |
-| 7 | `README.md` es la plantilla de AI Studio | Reescribir cuando toque. |
-| 8 | `FinanceViewModel` ~1000 líneas | Partirlo por dominios (dashboard/movimientos/presupuesto/portafolio) cuando haya una razón funcional; el respaldo ya salió a `BackupViewModel`. |
+| 4 | `ReasoningService`/Ollama sin consumidor | Código muerto a la espera de cablearse (el comentario de `network_security_config.xml` ya contempla las salidas HTTPS opcionales). |
+| 5 | Deprecaciones y estilo pendientes | `TabRow` deprecado (AjustesScreen, MovimientosScreen → Primary/SecondaryTabRow); `Icons.Filled.ReceiptLong` (MovimientosScreen) y `Backspace` (PinPad) → AutoMirrored; `Color.White` de DashboardScreen por auditar sitio a sitio (los blancos sobre degradado fijo de los heros están BIEN y no se tocan). |
+| 6 | `README.md` es la plantilla de AI Studio | Reescribir cuando toque. |
+| 7 | `FinanceViewModel` ~1000 líneas | Partirlo por dominios (dashboard/movimientos/presupuesto/portafolio) cuando haya una razón funcional; respaldo, Notion y cartola ya salieron a sus propios ViewModels. |
 
 ## Backlog priorizado
 
@@ -125,9 +124,16 @@ se versiona** (`.gitignore`): es el único lugar del equipo con el secreto. El m
 pegado en la app (Ajustes → Notion). Nota: ese servidor MCP no puede crear bases (la API
 2025-09-03 lo prohíbe en su endpoint); las 4 se crearon llamando
 `POST /v1/databases` con `Notion-Version: 2022-06-28`, la misma que usa `NotionApi`.
-1. Importar cartola bancaria CSV con mapeo de columnas y detección de duplicados — SIGUIENTE.
-2. Entrada rápida: repetir último movimiento, categoría sugerida por descripción; checkbox
-   "repetir cada mes" en el diálogo de agregar movimiento (crea la regla desde Movimientos).
+**Cartola CSV (P1-2, hecho 27-jul-2026):** Ajustes → Administración y Datos → "Importar
+cartola CSV". Parser chileno PURO en `data/cartola/` (9 tests): separador `;`/`,`/tab, montos
+`$1.234.567` (punto=miles, coma=decimal), fechas dd/MM/yyyy→ISO, preámbulo del banco,
+Windows-1252 y comillas CSV. Diálogo de mapeo con adivinanza por encabezados + vista previa
+interpretada en vivo; modos Cargo/Abono o Monto con signo; categoría destino elegible.
+Dedup por huella fecha+monto+tipo+descripción normalizada contra la BD y dentro del archivo
+(reimportar la misma cartola JAMÁS duplica); inserción atómica que solo agrega.
+1. Entrada rápida: repetir último movimiento, categoría sugerida por descripción; checkbox
+   "repetir cada mes" en el diálogo de agregar movimiento (crea la regla desde Movimientos)
+   — SIGUIENTE.
 
 **P1 — Renta útil**
 4. Entidades Room `TaxLotEntity` / `SaleEntity` / `DividendEntity` + `MIGRATION_4_5` explícita
