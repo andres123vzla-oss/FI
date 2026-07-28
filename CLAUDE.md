@@ -19,6 +19,13 @@ Consecuencias de ese destinatario:
 Toda la comunicación, comentarios y textos de UI son en **español**. El prompt de arranque
 para sesiones de trabajo está en `docs/PROMPT_FABLE5.md`.
 
+> ⚠️ **La copia CANÓNICA es `C:\Users\andre\Downloads\revistee\FI-Suite`.** En el equipo hay
+> dos copias antiguas y divergentes que NO se deben usar ni borrar:
+> `C:\Users\andre\FI` (12-jun-2026) y `C:\Users\andre\FI-Suite` (16-jun-2026, con más de 20
+> archivos sin commitear, incluida otra versión de la sync Notion donde los IDs de base se
+> pegan a mano). Abrir la carpeta equivocada en Android Studio instala en el teléfono una app
+> distinta a la de este repo — pasó el 27-jul-2026 y costó un buen rato de diagnóstico.
+
 ## Prioridades (en orden)
 
 1. **Compilación estable y tests verdes** — el proyecto siempre compila; los tests unitarios
