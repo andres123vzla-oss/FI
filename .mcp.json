@@ -1,0 +1,25 @@
+{
+  "_comentario": [
+    "Servidor MCP de Notion con ALCANCE DE PROYECTO: solo aplica dentro de FI-Suite y no",
+    "afecta el conector de Notion de la cuenta de Claude (que queda para los demas chats).",
+    "",
+    "El token NUNCA se escribe aqui: este archivo esta versionado en git y la regla del",
+    "proyecto es 'no hardcodear claves ni secretos'. Se referencia la variable de entorno",
+    "NOTION_TOKEN, que vive en el equipo, fuera del repositorio.",
+    "",
+    "Definirla en Windows (nivel usuario, persistente; luego reiniciar Claude Code):",
+    "  [Environment]::SetEnvironmentVariable('NOTION_TOKEN', 'ntn_TU_TOKEN', 'User')",
+    "",
+    "Es el MISMO token de integracion interna que se pega en la app (Ajustes -> Notion).",
+    "La integracion solo necesita permisos de insertar y actualizar contenido."
+  ],
+  "mcpServers": {
+    "notion-fi": {
+      "command": "npx",
+      "args": ["-y", "@notionhq/notion-mcp-server"],
+      "env": {
+        "NOTION_TOKEN": "${NOTION_TOKEN}"
+      }
+    }
+  }
+}

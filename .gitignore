@@ -5,6 +5,9 @@
 # Config del IDE fuera del control de versiones (se retiró completa del repo al pasar el
 # proyecto a uso personal; Android Studio la regenera localmente).
 /.idea/
+# Ajustes LOCALES de Claude Code (por máquina). Nunca se versionan: contienen permisos del
+# equipo y variables de entorno con secretos (p. ej. NOTION_TOKEN de la sync con Notion).
+/.claude/settings.local.json
 .DS_Store
 /build
 /captures

@@ -8,10 +8,10 @@ import kotlinx.coroutines.flow.first
  * secretos — el secreto es el TOKEN, que viaja aparte y se guarda cifrado.
  */
 data class NotionSyncConfig(
-    val movimientosDatabaseId: String = "bd4e9cfe26f94a4ea3521afd096ee44f",
-    val recurrentesDatabaseId: String = "eecd3c12c005420aadf2ac9f2c1cf8f2",
-    val presupuestoDatabaseId: String = "5d78162480114a79ad6f6b7bda3679ec",
-    val portafolioDatabaseId: String = "0d4ea29fd73f48da97d8e3a3b314693d",
+    val movimientosDatabaseId: String = "3ab443f0434381d79f9acd92a61e05cb",
+    val recurrentesDatabaseId: String = "3ab443f04343813b93bdf9afcfb27110",
+    val presupuestoDatabaseId: String = "3ab443f04343814d9a06e038983d6a66",
+    val portafolioDatabaseId: String = "3ab443f043438168b85ef1a39eb51d36",
 )
 
 /**

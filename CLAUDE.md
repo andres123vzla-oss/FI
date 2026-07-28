@@ -105,12 +105,19 @@ totales de referencia y la cartera. Passphrase incorrecta debe fallar con mensaj
 intacta (ya blindado por `BackupRoundTripTest`).
 
 **P1 — fricción diaria** (recurrentes ✅ · sync Notion ✅)
-La sync usa `database_id` (API 2022-06-28) de las bases espejo: Movimientos
-`bd4e9cfe26f94a4ea3521afd096ee44f`, Recurrentes `eecd3c12c005420aadf2ac9f2c1cf8f2`,
-Presupuesto `5d78162480114a79ad6f6b7bda3679ec`, Portafolio `0d4ea29fd73f48da97d8e3a3b314693d`
+La sync usa `database_id` (API 2022-06-28) de las bases espejo, que viven en el workspace
+**FINANZAS** del usuario (página madre `373443f0-4343-8054-ae15-def8db335092`): Movimientos
+`3ab443f0434381d79f9acd92a61e05cb`, Recurrentes `3ab443f04343813b93bdf9afcfb27110`,
+Presupuesto `3ab443f04343814d9a06e038983d6a66`, Portafolio `3ab443f043438168b85ef1a39eb51d36`
 (constantes en `NotionSyncConfig`). Tradeoff de nube asumido explícitamente por el usuario.
-Falta solo su paso manual: crear la integración en notion.so/my-integrations, compartirle la
-página "Finanzas" y pegar el token en Ajustes.
+
+Para trabajar contra ese workspace desde Claude Code hay un servidor MCP **con alcance de
+proyecto** en `.mcp.json` (`notion-fi`, paquete `@notionhq/notion-mcp-server`) que lee el token
+de la variable `NOTION_TOKEN`. Esa variable vive en `.claude/settings.local.json`, que **ya no
+se versiona** (`.gitignore`): es el único lugar del equipo con el secreto. El mismo token va
+pegado en la app (Ajustes → Notion). Nota: ese servidor MCP no puede crear bases (la API
+2025-09-03 lo prohíbe en su endpoint); las 4 se crearon llamando
+`POST /v1/databases` con `Notion-Version: 2022-06-28`, la misma que usa `NotionApi`.
 1. Importar cartola bancaria CSV con mapeo de columnas y detección de duplicados — SIGUIENTE.
 2. Entrada rápida: repetir último movimiento, categoría sugerida por descripción; checkbox
    "repetir cada mes" en el diálogo de agregar movimiento (crea la regla desde Movimientos).
