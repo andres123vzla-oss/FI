@@ -202,6 +202,15 @@ interface FinanceDao {
         updatedRules.forEach { updateRecurring(it) }
     }
 
+    /**
+     * P1-2: importación de cartola — inserta el lote completo en UNA transacción (todo o nada).
+     * Solo agrega; jamás borra ni modifica movimientos existentes.
+     */
+    @Transaction
+    suspend fun insertTransactionsAtomic(transactions: List<TransactionEntity>) {
+        transactions.forEach { insertTransaction(it) }
+    }
+
     // --- Sync Notion: guardar el id de página espejo (update PARCIAL, patrón ARQ2-04) ---
     // Solo toca notionPageId: la sync corre sobre un snapshot y un @Update de fila completa
     // pisaría ediciones concurrentes del usuario (lost update).

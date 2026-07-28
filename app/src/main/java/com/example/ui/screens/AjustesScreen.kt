@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.entity.CategoryEntity
 import com.example.security.SecurityViewModel
+import com.example.ui.components.CartolaMappingDialog
 import com.example.ui.components.CategoryChip
 import com.example.ui.components.EmptyState
 import com.example.ui.components.FinanceCard
@@ -60,6 +61,8 @@ import com.example.ui.security.SecuritySettingsCard
 import com.example.ui.theme.LocalFinanceColors
 import com.example.ui.viewmodel.BackupUiState
 import com.example.ui.viewmodel.BackupViewModel
+import com.example.ui.viewmodel.CartolaUiState
+import com.example.ui.viewmodel.CartolaViewModel
 import com.example.ui.viewmodel.FinanceViewModel
 import com.example.ui.viewmodel.NotionSyncUiState
 import com.example.ui.viewmodel.NotionSyncViewModel
@@ -74,6 +77,7 @@ fun AjustesScreen(
     securityViewModel: SecurityViewModel = viewModel(),
     backupViewModel: BackupViewModel = viewModel(),
     notionViewModel: NotionSyncViewModel = viewModel(),
+    cartolaViewModel: CartolaViewModel = viewModel(),
 ) {
     val categories by viewModel.allCategories.collectAsState()
     val isPinSet by securityViewModel.isPinSet.collectAsState()
@@ -158,6 +162,28 @@ fun AjustesScreen(
                 haptics.performHapticFeedback(HapticFeedbackType.Reject)
                 snackbarHostState.showSnackbar(s.message)
                 backupViewModel.acknowledgeResult()
+            }
+            else -> {}
+        }
+    }
+
+    // --- P1-2: Importar cartola bancaria CSV ---
+    val cartolaState by cartolaViewModel.state.collectAsState()
+    val cartolaLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> if (uri != null) cartolaViewModel.loadFile(uri) }
+
+    LaunchedEffect(cartolaState) {
+        when (val s = cartolaState) {
+            is CartolaUiState.Success -> {
+                haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                snackbarHostState.showSnackbar(s.message)
+                cartolaViewModel.acknowledgeResult()
+            }
+            is CartolaUiState.Error -> {
+                haptics.performHapticFeedback(HapticFeedbackType.Reject)
+                snackbarHostState.showSnackbar(s.message)
+                cartolaViewModel.acknowledgeResult()
             }
             else -> {}
         }
@@ -606,6 +632,59 @@ fun AjustesScreen(
                         }
                     }
 
+                    // P1-2: importar la cartola del banco (solo agrega; dedup automático).
+                    Surface(
+                        onClick = { cartolaLauncher.launch(arrayOf("*/*")) },
+                        enabled = cartolaState !is CartolaUiState.Working,
+                        modifier = Modifier.fillMaxWidth().testTag("cartola_import_row"),
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        shape = MaterialTheme.shapes.medium,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(MaterialTheme.shapes.small)
+                                    .background(finance.accentCyan.copy(alpha = 0.1f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.UploadFile, contentDescription = null, tint = finance.accentCyan)
+                            }
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Importar cartola CSV",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                                Text(
+                                    "Carga los movimientos del CSV de tu banco. Detecta duplicados; nada se borra.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    (cartolaState as? CartolaUiState.Working)?.let { working ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                            Text(
+                                working.label,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
                     // Recordatorio: cuándo fue el último respaldo (o aviso si nunca se ha hecho).
                     Text(
                         lastBackupLabel(lastBackupAt),
@@ -839,6 +918,17 @@ fun AjustesScreen(
                     Text("Cancelar")
                 }
             }
+        )
+    }
+
+    // --- P1-2: diálogo de mapeo de la cartola ---
+    (cartolaState as? CartolaUiState.Preview)?.let { preview ->
+        CartolaMappingDialog(
+            parsed = preview.parsed,
+            initialMapping = preview.guess,
+            categoryOptions = (categories.map { it.name } + "Otros").distinct(),
+            onDismiss = { cartolaViewModel.dismissPreview() },
+            onConfirm = { mapping -> cartolaViewModel.confirmImport(mapping) },
         )
     }
 

@@ -144,6 +144,10 @@ class FinanceRepository(private val dao: FinanceDao) {
     suspend fun updateRecurringRule(rule: RecurringRuleEntity) = dao.updateRecurring(rule)
     suspend fun deleteRecurringRuleById(id: Int) = dao.deleteRecurringById(id)
 
+    /** P1-2: importa los movimientos de una cartola en una transacción atómica (solo agrega). */
+    suspend fun importTransactions(transactions: List<TransactionEntity>) =
+        dao.insertTransactionsAtomic(transactions)
+
     // --- Sync Notion: persistir el id de página espejo (updates parciales, ARQ2-04) ---
     suspend fun setTransactionNotionId(id: Int, pageId: String) = dao.setTransactionNotionId(id, pageId)
     suspend fun setBudgetNotionId(id: Int, pageId: String) = dao.setBudgetNotionId(id, pageId)
